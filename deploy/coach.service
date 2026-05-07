@@ -1,0 +1,57 @@
+[Unit]
+Description=Coach Adaptatif (Go backend)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=coach
+Group=coach
+
+# Reads COACH_DATA, COACH_PUBLIC, COACH_LISTEN, COACH_TRUST_PROXY, COACH_ALLOW_REGISTRATION
+EnvironmentFile=/etc/coach.env
+
+ExecStart=/srv/coach/coach
+Restart=on-failure
+RestartSec=5s
+
+# --- Sandboxing (systemd hardening) ---
+# Filesystem: service can only write to its data dir.
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/coach
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+
+# Capabilities: we bind to a high port (8080), so we need none.
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+
+# Network scope: IPv4/IPv6 only; block raw sockets etc.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+UMask=0077
+
+# Resource limits — stop a runaway/DoS from taking the whole VPS down.
+LimitNOFILE=4096
+MemoryMax=256M
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

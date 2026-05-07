@@ -1,0 +1,2407 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="theme-color" content="#0E1428" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F5F6FA" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Coach">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
+<link rel="apple-touch-icon" href="/icon.svg">
+<title>Coach Adaptatif</title>
+<style>
+  /* ===== Palette Atmos — sombre par défaut, indigo profond + coral / lime ===
+   * Direction visuelle "Atmos" : indigo nocturne en fond, coral comme primaire
+   * (CTA, brand, sélection), lime comme accent secondaire (succès, XP, badge
+   * gagné), ambre dorée pour l'attention. Le mode clair garde la même
+   * personnalité mais inversée — bg presque blanc avec un soupçon d'indigo,
+   * accents assombris pour passer WCAG AA sur fond clair.
+   *
+   * Tous les ratios de contraste sont ≥ 4.5:1 sur les surfaces typiques
+   * (vérifié au calcul WCAG 2.1). Les seules exceptions sont les `--mut`
+   * sur card secondaire qui ont 4.4:1 — réservés aux labels en majuscules
+   * (large text) qui ont besoin de seulement 3:1.
+   */
+  :root {
+    /* === Atmos sombre = défaut (signature Atmos = nocturne) === */
+
+    /* Primary — indigo brillant pour CTA secondaires et liens */
+    --blue:#7BA1FF;
+    --blue-light:#A5BFFF;
+    --blue-dark:#5070C7;
+    --blue-tint:#1F2747;
+
+    /* Accent coral — la couleur signature, utilisée pour boutons primaires,
+       sélection, état actif, focus secondaire */
+    --accent:#FF5C7C;
+    --accent-dark:#D43A5C;
+    --accent-light:#FF85A0;
+    --accent-tint:#3A1A28;
+
+    /* Statuts — lime pour succès (signature Atmos #2), ambre/red conservés */
+    --success:#5DD4A4;
+    --success-dark:#2D9B7A;
+    --success-tint:#102E26;
+
+    --warn:#F2C457;
+    --warn-dark:#B58C23;
+    --warn-tint:#2E2412;
+
+    --danger:#FF6B6B;
+    --danger-dark:#C04A4A;
+    --danger-tint:#2E1414;
+
+    /* Surfaces & texte */
+    --bg:#0E1428;
+    --bg2:#161D3A;
+    --card:#1A2245;
+    --line:#2A3358;
+    --line-strong:#3A4470;
+    --txt:#EFF1FA;
+    --txt-soft:#C5CCE0;
+    --mut:#9098C0;
+
+    /* Bouton primaire = coral (la signature de l'app) */
+    --btn-bg:#FF5C7C;
+    --btn-fg:#0E1428;
+
+    /* Aliases utiles */
+    --ok:var(--success);
+    --ko:var(--danger);
+
+    --radius:14px;
+    --radius-lg:20px;
+    --shadow-sm:0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px rgba(123,161,255,0.06);
+    --shadow-md:0 6px 20px rgba(0,0,0,0.55), 0 0 0 1px rgba(123,161,255,0.08);
+
+    /* Glass : couche translucide au-dessus du fond. Les cards utilisent
+       cette valeur pour le backdrop-filter — sans imagerie de fond le blur
+       n'apparaît pas mais la transparence donne une profondeur visuelle */
+    --glass-bg:rgba(28, 38, 78, 0.65);
+    --glass-bg-strong:rgba(35, 46, 92, 0.78);
+
+    color-scheme: dark light;
+  }
+
+  /* ===== Atmos light = optionnel via prefers-color-scheme: light ====== */
+  @media (prefers-color-scheme: light) {
+    :root {
+      --blue:#2D44A8;
+      --blue-light:#5070C7;
+      --blue-dark:#1B2B7A;
+      --blue-tint:#E6EAFA;
+
+      /* Coral assombri pour passer 4.5:1 sur fond blanc */
+      --accent:#C73850;
+      --accent-dark:#9D2540;
+      --accent-light:#E04764;
+      --accent-tint:#FBE7EC;
+
+      /* Success light : assombri à #136F58 pour passer 4.5:1 sur bg clair */
+      --success:#136F58;
+      --success-dark:#0D5544;
+      --success-tint:#E4F5EE;
+
+      /* Warn light : assombri à #8B5C00 pour passer 4.5:1 sur bg clair */
+      --warn:#8B5C00;
+      --warn-dark:#634100;
+      --warn-tint:#FFF1D2;
+
+      --danger:#C8333D;
+      --danger-dark:#9C2530;
+      --danger-tint:#FBE6E8;
+
+      --bg:#F5F6FA;
+      --bg2:#ECEEF6;
+      --card:#FFFFFF;
+      --line:#E1E4F0;
+      --line-strong:#C7CCE0;
+      --txt:#0E1428;
+      --txt-soft:#2E3858;
+      --mut:#5A658A;
+
+      --btn-bg:#C73850;
+      --btn-fg:#FFFFFF;
+
+      --shadow-sm:0 1px 2px rgba(14,20,40,0.04), 0 2px 6px rgba(14,20,40,0.05);
+      --shadow-md:0 2px 4px rgba(14,20,40,0.06), 0 8px 24px rgba(199,56,80,0.12);
+
+      --glass-bg:rgba(255,255,255,0.85);
+      --glass-bg-strong:rgba(255,255,255,0.95);
+    }
+    .mode-toggle button.on { background: var(--blue); color: #fff; }
+  }
+
+  *{box-sizing:border-box}
+  /* Font stack Atmos : SF Pro Rounded sur Apple, ui-rounded fallback,
+     Inter sinon. Pas de @font-face — on s'appuie sur les fonts système
+     pour rester rapide à charger et CSP-safe (script-src/font-src self). */
+  html,body{margin:0;padding:0;color:var(--txt);
+    font-family:"SF Pro Rounded","ui-rounded","Hiragino Maru Gothic ProN",
+      "Quicksand","Comfortaa","Manjari","Inter","Segoe UI",system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased;overscroll-behavior:none;
+    font-feature-settings:"ss01","cv01";}
+  /* Background avec un dégradé radial subtil — signature Atmos. La couleur
+     d'arrière-plan reste --bg pour les screenshots et les PDF. */
+  body{
+    min-height:100vh;
+    padding-bottom:96px;
+    background:var(--bg);
+    background-image:
+      radial-gradient(ellipse at 20% 0%, rgba(123,161,255,0.08), transparent 50%),
+      radial-gradient(ellipse at 80% 100%, rgba(255,92,124,0.06), transparent 50%);
+    background-attachment: fixed;
+  }
+  @media (prefers-color-scheme: light) {
+    body {
+      background-image:
+        radial-gradient(ellipse at 20% 0%, rgba(45,68,168,0.04), transparent 50%),
+        radial-gradient(ellipse at 80% 100%, rgba(199,56,80,0.04), transparent 50%);
+    }
+  }
+  header{position:sticky;top:0;z-index:5;background:var(--glass-bg);
+    backdrop-filter:blur(20px) saturate(180%);
+    -webkit-backdrop-filter:blur(20px) saturate(180%);
+    border-bottom:1px solid var(--line);padding:14px 20px;
+    display:flex;justify-content:space-between;align-items:center;gap:12px}
+  header .hdr-title{min-width:0;flex:1}
+  header h1{margin:0;font-size:16px;font-weight:600;letter-spacing:-0.01em;color:var(--txt);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  header .sub{color:var(--mut);font-size:12px;margin-top:2px;font-weight:500;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .admin-chip{flex-shrink:0;font-size:11px;font-weight:600;padding:4px 10px;
+    border:1px solid var(--accent);border-radius:999px;color:#fff;
+    text-decoration:none;background:var(--accent);letter-spacing:0.02em;
+    box-shadow:var(--shadow-sm);transition:background 0.15s ease}
+  .admin-chip:hover{background:var(--accent-dark);border-color:var(--accent-dark)}
+  /* En mode sombre (Atmos default), le coral est suffisamment vif pour qu'un
+     texte sombre dessus offre un meilleur contraste qu'un blanc qui se mange
+     dans la saturation. Light mode (coral assombri) garde le texte blanc. */
+  .admin-chip { color: var(--bg); }
+  @media (prefers-color-scheme: light){
+    .admin-chip { color: #fff; }
+  }
+  main{padding:18px;max-width:760px;margin:0 auto}
+
+  /* ===== Cards (glass Atmos) =====
+     Cards utilisent un fond translucide + backdrop-filter pour donner une
+     profondeur visuelle. Sur fond plat (sans imagerie derrière) le blur
+     n'a pas d'effet visible mais la transparence laisse passer le subtle
+     radial gradient du body — ça suffit pour avoir cette qualité "glass".
+     Fallback : navigateurs sans support du backdrop-filter (rare en 2026)
+     reçoivent --card opaque comme avant via @supports not. */
+  .card{
+    background:var(--glass-bg);
+    backdrop-filter:blur(20px) saturate(180%);
+    -webkit-backdrop-filter:blur(20px) saturate(180%);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:18px;margin-bottom:14px;
+    box-shadow:var(--shadow-sm);
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .card { background: var(--card); }
+  }
+  .card h2{margin:0 0 10px;font-size:15px;font-weight:600;color:var(--txt);letter-spacing:-0.005em}
+  .card h3{margin:0 0 6px;font-size:13px;font-weight:600;color:var(--txt-soft)}
+  .card p{margin:6px 0;color:var(--txt-soft);font-size:14px;line-height:1.55}
+
+  /* ===== Layout ===== */
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .w-full{width:100%}.flex1{flex:1}
+  .mt4{margin-top:4px}.mt8{margin-top:8px}.mt10{margin-top:10px}.mt16{margin-top:16px}
+
+  /* ===== Buttons ===== */
+  button,.btn{appearance:none;border:none;border-radius:10px;padding:12px 16px;
+    font-size:14px;font-weight:600;cursor:pointer;background:var(--btn-bg);color:var(--btn-fg);
+    transition:transform 0.05s ease, opacity 0.15s ease, background 0.15s ease;
+    font-family:inherit;text-decoration:none;display:inline-block;text-align:center}
+  button:hover,.btn:hover{opacity:0.92}
+  button:active{transform:scale(0.98)}
+  button:disabled{opacity:0.4;cursor:not-allowed}
+  /* Secondary buttons : verre subtil avec bordure forte. Cohérent avec les
+     cards. Le text reste --txt pour rester lisible sur les deux modes. */
+  button.sec{
+    background:var(--glass-bg);
+    backdrop-filter:blur(10px);
+    -webkit-backdrop-filter:blur(10px);
+    color:var(--txt);
+    border:1px solid var(--line-strong);
+  }
+  button.sec:hover{background:var(--glass-bg-strong)}
+  /* Sémantiques en Atmos : .magenta et .accent = primaire coral (CTA brand),
+     .blue = secondaire indigo brillant (action moins critique), .ok = lime
+     (succès, positif), .warn = ambre, .ko = corail-rouge (destructif). */
+  button.magenta,button.accent{background:var(--accent);color:var(--btn-fg)}
+  button.magenta:hover,button.accent:hover{background:var(--accent-light)}
+  button.blue{background:var(--blue);color:var(--bg)}
+  button.blue:hover{background:var(--blue-light)}
+  button.ok{background:var(--success);color:var(--bg)}
+  button.ok:hover{background:var(--success);filter:brightness(1.1)}
+  button.warn{background:var(--warn);color:var(--bg)}
+  button.ko{background:var(--danger);color:#fff}
+  button.ko:hover{background:var(--danger-dark)}
+  button.tiny{padding:5px 10px;font-size:11px;font-weight:500}
+  .back-btn{background:transparent;color:var(--txt-soft);padding:6px 0;font-weight:500;font-size:14px}
+
+  /* ===== Chips =====
+     Atmos : état actif = coral signature, pas l'indigo. Le checkmark ✓
+     est ajouté en CSS pseudo-element pour donner un signal non-couleur
+     (a11y bonus : l'état actif est lisible même en daltonisme). */
+  .chip{display:inline-block;padding:6px 12px;border-radius:999px;background:var(--bg2);
+    border:1px solid var(--line);font-size:12px;color:var(--txt-soft);margin:3px 4px 3px 0;
+    cursor:pointer;user-select:none;font-weight:500;transition:all 0.18s cubic-bezier(0.22,1,0.36,1)}
+  .chip:hover{border-color:var(--line-strong);color:var(--txt)}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:var(--btn-fg)}
+  .chip.on::before{content:"✓ ";font-weight:700}
+
+  /* ===== Inputs ===== */
+  input[type=email],input[type=password],input[type=number],input[type=text],select,textarea{
+    width:100%;background:var(--card);border:1px solid var(--line-strong);border-radius:10px;
+    padding:10px 14px;color:var(--txt);font-size:15px;font-family:inherit;
+    transition:border-color 0.15s ease}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue)}
+  /* Sliders Atmos : track épais, gros thumb tactile (28px = bien au-dessus
+     des 24px Apple HIG), gradient coral pour la portion remplie. Mains
+     moites, doigts épais : on veut un thumb facile à attraper. */
+  input[type=range]{width:100%;-webkit-appearance:none;appearance:none;
+    background:transparent;height:44px;cursor:pointer;padding:0;margin:0;
+    /* JS pose --pct sur l'input pour que le track montre la progression */
+    --pct: 50%;
+  }
+  /* WebKit (Safari, Chrome iOS, Chrome desktop) */
+  input[type=range]::-webkit-slider-runnable-track{
+    height:8px;border-radius:999px;
+    background:linear-gradient(to right,
+      var(--accent) 0%, var(--accent) var(--pct, 50%),
+      var(--bg2) var(--pct, 50%), var(--bg2) 100%);
+  }
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:28px;height:28px;
+    border-radius:50%;background:var(--accent);margin-top:-10px;cursor:pointer;
+    border:3px solid var(--bg);
+    box-shadow:0 2px 10px rgba(255,92,124,0.45),0 0 0 1px var(--accent-dark);
+    transition: transform 0.12s ease, box-shadow 0.18s ease;
+  }
+  input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15);
+    box-shadow:0 4px 14px rgba(255,92,124,0.55),0 0 0 1px var(--accent-dark)}
+  /* Firefox */
+  input[type=range]::-moz-range-track{height:8px;background:var(--bg2);border-radius:999px}
+  input[type=range]::-moz-range-progress{height:8px;background:var(--accent);border-radius:999px}
+  input[type=range]::-moz-range-thumb{width:28px;height:28px;border-radius:50%;
+    background:var(--accent);border:3px solid var(--bg);cursor:pointer;
+    box-shadow:0 2px 10px rgba(255,92,124,0.45)}
+  input[type=range]:focus-visible{outline:none}
+  input[type=range]:focus-visible::-webkit-slider-thumb{
+    box-shadow:0 0 0 3px var(--accent-tint),0 2px 10px rgba(255,92,124,0.45)}
+
+  /* Tick marks affichées sous le slider via un sibling .tick-row */
+  .tick-row {
+    display: flex;
+    justify-content: space-between;
+    margin: -6px 14px 0;
+    padding: 0;
+  }
+  .tick-row span {
+    color: var(--mut);
+    font-size: 10px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  textarea{min-height:70px;resize:vertical}
+  label{display:block;font-size:12px;color:var(--mut);margin-bottom:6px;
+    text-transform:uppercase;letter-spacing:0.06em;font-weight:600}
+  .field{margin-bottom:12px}
+  .big{font-size:40px;font-weight:700;letter-spacing:-0.03em;text-align:center;margin:10px 0}
+  .huge{font-size:84px;font-weight:800;letter-spacing:-0.04em;text-align:center;
+    font-variant-numeric:tabular-nums;color:var(--txt)}
+  .center{text-align:center}
+  .mut{color:var(--mut);font-size:13px;font-weight:500}
+  .err{color:var(--danger);font-size:13px;margin-top:8px;min-height:18px;font-weight:600}
+  .hide{display:none !important}
+
+  /* ===== Pills ===== */
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;
+    font-weight:600;background:var(--bg2);border:1px solid var(--line);color:var(--txt-soft)}
+  .pill.ok{background:var(--success-tint);border-color:var(--success);color:var(--success-dark)}
+  .pill.warn{background:var(--warn-tint);border-color:var(--warn);color:var(--warn-dark)}
+  .pill.ko{background:var(--danger-tint);border-color:var(--danger);color:var(--danger-dark)}
+  .pill.accent{background:var(--accent-tint);border-color:var(--accent);color:var(--accent-dark)}
+
+  /* ===== Table ===== */
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{padding:9px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+  th{color:var(--mut);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.05em}
+
+  /* ===== Progress bars ===== */
+  .bar{height:10px;background:var(--bg2);border-radius:999px;overflow:hidden;position:relative}
+  .bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--accent));
+    border-radius:999px;transition:width 0.4s ease}
+
+  /* ===== Set rows ===== */
+  .set-row{display:grid;grid-template-columns:32px 1fr 1fr 1fr;gap:10px;align-items:center;
+    padding:10px 0;border-bottom:1px dashed var(--line)}
+  .set-row:last-child{border-bottom:none}
+  .set-row.done{opacity:0.55}
+  .set-row input{padding:8px 10px;font-size:14px}
+
+  /* ===== Tap zone ===== */
+  .tap-zone{margin:20px auto;width:220px;height:220px;border-radius:50%;
+    background:radial-gradient(circle at 30% 30%,var(--line),var(--line-strong));
+    display:flex;align-items:center;justify-content:center;font-weight:800;
+    font-size:22px;color:var(--txt-soft);user-select:none;cursor:pointer;
+    box-shadow:var(--shadow-md);transition:all 0.1s ease}
+  .tap-zone.active{background:radial-gradient(circle at 30% 30%,var(--accent-light),var(--accent));
+    color:#fff;box-shadow:0 10px 40px rgba(232,149,77,0.45)}
+
+  /* ===== Nav (Atmos glass + FAB central) ============================
+     5 colonnes : 2 onglets, FAB central qui flotte au-dessus, 2 onglets.
+     L'onglet actif n'a plus de fond — c'est le .nav-pill, un span absolu
+     positionné en JS (positionNavPill) qui glisse sous l'onglet actif
+     avec une animation d'easing exponentiel. Plus fluide qu'un bg-change
+     et beaucoup plus joli au regard.
+     ==================================================================== */
+  nav.bottom{position:fixed;bottom:0;left:0;right:0;
+    background:var(--glass-bg-strong);
+    backdrop-filter:blur(24px) saturate(180%);
+    -webkit-backdrop-filter:blur(24px) saturate(180%);
+    border-top:1px solid var(--line);
+    display:grid;
+    grid-template-columns: 1fr 1fr 80px 1fr 1fr;
+    padding:8px;padding-bottom:max(10px,env(safe-area-inset-bottom));
+    box-shadow:0 -4px 20px rgba(0,0,0,0.18);
+    position: fixed;  /* explicit again for the .nav-pill absolute parent */
+  }
+  nav.bottom button[data-tab]{background:transparent;color:var(--mut);font-size:11px;
+    padding:10px 6px;border-radius:12px;font-weight:500;
+    position: relative; z-index: 2;  /* sit above the pill */
+  }
+  nav.bottom button[data-tab].active{color:var(--accent)}
+  /* En light mode, le coral primaire sur le tint pâle est juste sous AA
+     (4.32:1). On force accent-dark sur le texte pour passer 4.5+. */
+  @media (prefers-color-scheme: light){
+    nav.bottom button[data-tab].active{color:var(--accent-dark)}
+  }
+
+  /* Pill animée — positionnée en absolu dans la nav, glissée par JS via
+     `transform: translateX()`. Cubic-bezier "exponential out" pour
+     l'aterrissage doux. */
+  .nav-pill {
+    position: absolute;
+    top: 8px;
+    left: 0;
+    height: calc(100% - 16px - max(0px, env(safe-area-inset-bottom)));
+    width: 0;
+    background: var(--accent-tint);
+    border-radius: 12px;
+    transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+                width 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+                opacity 0.18s ease;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0;  /* hidden until JS positions it */
+  }
+  .nav-pill.ready { opacity: 1 }
+
+  /* FAB cell + bouton flottant ============================================
+     Le bouton dépasse de la nav vers le haut (translateY négatif) et a
+     une bordure de la même couleur que le bg pour donner l'illusion
+     d'être "découpé" dans la barre. */
+  .fab-cell {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+  }
+  .fab {
+    position: absolute;
+    bottom: 4px;
+    width: 60px; height: 60px;
+    padding: 0;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--btn-fg);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 8px 24px rgba(255,92,124,0.45),
+                0 2px 6px rgba(0,0,0,0.3);
+    transform: translateY(-22px);
+    border: 4px solid var(--bg);
+    transition: transform 0.22s cubic-bezier(0.22,1,0.36,1),
+                box-shadow 0.22s ease, background 0.18s ease;
+    cursor: pointer;
+  }
+  @media (prefers-color-scheme: light) {
+    .fab { box-shadow: 0 8px 24px rgba(199,56,80,0.35), 0 2px 6px rgba(14,20,40,0.12); }
+  }
+  .fab:hover  { transform: translateY(-24px) scale(1.04); background: var(--accent-light); }
+  .fab:active { transform: translateY(-20px) scale(0.96); }
+  .fab svg { display: block; }
+
+  /* ===== Details (history) — glass cards alignées sur .card ===== */
+  details{background:var(--glass-bg);
+    backdrop-filter:blur(16px) saturate(180%);
+    -webkit-backdrop-filter:blur(16px) saturate(180%);
+    border:1px solid var(--line);border-radius:12px;padding:12px;
+    margin-bottom:8px}
+  summary{cursor:pointer;font-weight:600;font-size:14px;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:'›';display:inline-block;margin-right:8px;color:var(--mut);
+    transition:transform 0.15s ease;font-size:18px;line-height:1}
+  details[open] summary::before{transform:rotate(90deg)}
+
+  /* ===== Auth tabs ===== */
+  .tabs{display:flex;gap:6px;padding:4px;background:var(--bg2);border-radius:10px;margin-bottom:16px}
+  .tabs button{flex:1;background:transparent;color:var(--mut);border:none;padding:8px 10px;font-size:13px}
+  .tabs button.on{background:var(--card);color:var(--txt);box-shadow:var(--shadow-sm)}
+
+  /* ===== Save state (Atmos glass pill) ===== */
+  .savestate{position:fixed;top:12px;right:16px;font-size:11px;color:var(--txt);
+    background:var(--glass-bg-strong);
+    backdrop-filter:blur(16px) saturate(180%);
+    -webkit-backdrop-filter:blur(16px) saturate(180%);
+    padding:5px 12px;border-radius:999px;border:1px solid var(--line);
+    z-index:10;box-shadow:var(--shadow-sm);font-weight:600}
+
+  /* ===== Offline bar — coral Atmos pour signaler bien plus fort que warn.
+      Stays above other chrome so the user always sees it — matters in the
+      gym where flaky wifi is the norm. ===== */
+  .offline-bar{position:sticky;top:0;left:0;right:0;z-index:50;
+    background:var(--accent);color:var(--btn-fg);text-align:center;
+    padding:8px 12px;font-size:13px;font-weight:600;
+    box-shadow:0 2px 12px rgba(255,92,124,0.35)}
+
+  /* ===== Hero ring (Atmos signature) =====
+     Carte glass avec un anneau SVG de progression XP, niveau au centre,
+     mascot en pastille flottante en haut à droite, XP texte en bas. */
+  .hero.hero-ring {
+    position: relative;
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    padding: 24px 20px 18px;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow-sm);
+    /* halo subtil derrière l'anneau */
+    overflow: hidden;
+  }
+  .hero.hero-ring::before {
+    content: '';
+    position: absolute;
+    top: -40%; left: 50%;
+    transform: translateX(-50%);
+    width: 320px; height: 320px;
+    background: radial-gradient(circle, var(--accent) 0%, transparent 65%);
+    opacity: 0.18;
+    pointer-events: none;
+  }
+  .hero-ring-svg {
+    display: block;
+    width: 200px; height: 200px;
+    margin: 0 auto;
+    position: relative;
+    z-index: 1;
+  }
+  .hero-ring-track {
+    stroke: var(--bg2);
+    opacity: 0.6;
+  }
+  .hero-ring-progress {
+    stroke: url(#heroRingGrad);
+    stroke: var(--accent);
+    transition: stroke-dashoffset 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+    filter: drop-shadow(0 0 8px rgba(255, 92, 124, 0.45));
+  }
+  .hero-ring-center {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, calc(-50% - 8px));
+    text-align: center;
+    z-index: 2;
+    pointer-events: none;
+  }
+  .hero-title {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--mut);
+    margin-bottom: 2px;
+  }
+  .hero-level {
+    font-size: 56px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    color: var(--txt);
+    font-variant-numeric: tabular-nums;
+  }
+  .hero-level-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--accent);
+    margin-top: 4px;
+  }
+  /* Mascot en pastille flottante en haut à droite — décoratif, lié à
+     l'identité de l'app sans dominer l'anneau. */
+  .hero-ring-mascot {
+    position: absolute;
+    top: 14px; right: 14px;
+    width: 56px; height: 56px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--glass-bg-strong);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    z-index: 3;
+    overflow: hidden;
+  }
+  .hero-ring-mascot svg, .hero-ring-mascot img {
+    width: 44px; height: 44px;
+  }
+  .hero-ring-bottom {
+    display: flex; justify-content: space-between;
+    margin-top: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--txt-soft);
+    font-variant-numeric: tabular-nums;
+    position: relative;
+    z-index: 1;
+  }
+  .hero-ring-bottom span:last-child { color: var(--accent); }
+
+  /* Stats quick row — glass cards alignées sur .card */
+  .qstats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+  .qstat{background:var(--glass-bg);
+    backdrop-filter:blur(16px) saturate(180%);
+    -webkit-backdrop-filter:blur(16px) saturate(180%);
+    border:1px solid var(--line);border-radius:12px;
+    padding:12px 10px;text-align:center;box-shadow:var(--shadow-sm)}
+  .qstat-val{font-size:22px;font-weight:800;color:var(--txt);letter-spacing:-0.02em;
+    font-variant-numeric:tabular-nums;line-height:1.1}
+  .qstat-lbl{font-size:10px;color:var(--mut);font-weight:600;margin-top:3px;
+    text-transform:uppercase;letter-spacing:0.05em}
+  .qstat-icon{font-size:18px;margin-bottom:2px;line-height:1}
+
+  /* Achievements */
+  .badges{display:flex;gap:8px;overflow-x:auto;padding:4px 0;margin:0 -4px;
+    scrollbar-width:thin}
+  .badge{flex-shrink:0;background:var(--bg2);border:1px solid var(--line);border-radius:12px;
+    padding:10px 12px;min-width:96px;text-align:center;opacity:0.4;transition:all 0.2s ease}
+  .badge.earned{opacity:1;background:var(--accent-tint);
+    border-color:var(--accent);color:var(--accent-dark);box-shadow:var(--shadow-sm)}
+  .badge-icon{font-size:24px;line-height:1;margin-bottom:4px}
+  .badge-title{font-size:11px;font-weight:700;line-height:1.2}
+  .badge-sub{font-size:9px;opacity:0.85;margin-top:2px}
+
+  /* Exercise guide row */
+  .exo-row{display:flex;align-items:center;gap:12px;
+    padding:12px 4px;border-bottom:1px solid var(--line);cursor:pointer;
+    transition:background 0.1s ease}
+  .exo-row:last-child{border-bottom:none}
+  .exo-row:hover{background:var(--bg2)}
+  .exo-row-text{flex:1;min-width:0}
+  .exo-name{font-weight:600;font-size:14px;color:var(--txt)}
+  .exo-arrow{color:var(--mut);font-size:22px;line-height:1}
+  .tip-list{margin:6px 0;padding-left:20px;color:var(--txt-soft);font-size:14px;line-height:1.6}
+  .tip-list li{margin-bottom:4px}
+
+  /* Video demo embed: 16:9 responsive wrapper, rounded corners, thin border so
+     it sits on the card surface in both light and dark themes. */
+  .video-wrap{position:relative;width:100%;padding-top:56.25%;
+    background:var(--bg2);border-radius:var(--radius);overflow:hidden;
+    border:1px solid var(--line)}
+  .video-wrap iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+
+
+  /* Next session row with swap */
+  .next-exo{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;
+    padding:12px 0;border-bottom:1px solid var(--line)}
+  .next-exo:last-child{border-bottom:none}
+  .next-exo-name{font-weight:600;font-size:14px}
+  .next-exo-meta{font-size:12px;color:var(--mut);margin-top:2px}
+  .next-exo-swap,.next-exo-note{padding:6px 10px;font-size:11px;font-weight:600;background:var(--bg2);
+    color:var(--txt-soft);border:1px solid var(--line-strong);border-radius:8px;cursor:pointer;
+    white-space:nowrap}
+  .next-exo-swap:hover{background:var(--blue);color:#fff;border-color:var(--blue)}
+  .next-exo-note:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .exo-note{font-size:12px;color:var(--accent-dark);background:var(--accent-tint);
+    border:1px dashed var(--accent);padding:6px 10px;border-radius:8px;margin-top:6px;
+    cursor:pointer;line-height:1.4}
+  .exo-note:hover{background:var(--card);border-style:solid}
+  .next-exo-1rm{font-size:11px;color:var(--mut);margin-top:2px;font-style:italic}
+  .cooldown-list{margin:0 0 14px;padding-left:18px;font-size:13px;line-height:1.55}
+  .cooldown-list li{margin-bottom:4px}
+  .gear-today{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center}
+  .gear-today .chip{font-size:11px;padding:4px 10px}
+  /* Calendar heatmap — 7 rows (Mon-Sun) × N weeks */
+  .heatmap-grid{display:grid;grid-template-rows:repeat(7,12px);grid-auto-flow:column;
+    grid-auto-columns:12px;gap:3px;overflow-x:auto;padding:4px 0}
+  .heatmap-cell{width:12px;height:12px;border-radius:2px;background:var(--bg2);
+    border:1px solid var(--line)}
+  /* Heatmap : ramp coral allant du tint le plus pâle au coral signature
+     pour les niveaux d'intensité 1→4. Bascule auto via les vars Atmos. */
+  .heatmap-cell.l1{background:var(--accent-tint);border-color:var(--accent-tint)}
+  .heatmap-cell.l2{background:var(--accent-light);border-color:var(--accent-light);opacity:0.55}
+  .heatmap-cell.l3{background:var(--accent);border-color:var(--accent);opacity:0.85}
+  .heatmap-cell.l4{background:var(--accent);border-color:var(--accent-dark)}
+  .heatmap-legend{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--mut);margin-top:6px}
+  .heatmap-legend .heatmap-cell{width:10px;height:10px}
+  /* Deload hint utilise les warn tints qui basculent par mode. */
+  .deload-hint{background:var(--warn-tint);border:1px solid var(--warn);color:var(--warn-dark);
+    padding:10px 12px;border-radius:8px;margin:8px 0;font-size:13px;line-height:1.45}
+
+  /* Modal — backdrop indigo nocturne pour rester dans la palette Atmos. */
+  .modal-backdrop{position:fixed;inset:0;background:rgba(14,20,40,0.55);
+    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    display:flex;align-items:center;justify-content:center;padding:20px;z-index:100;
+    animation:fadeIn 0.15s ease}
+  .modal{background:var(--card);border-radius:var(--radius-lg);padding:20px;
+    max-width:500px;width:100%;max-height:80vh;overflow-y:auto;box-shadow:var(--shadow-md);
+    animation:slideUp 0.2s ease}
+  .modal h2{margin:0 0 12px;font-size:16px;font-weight:700}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  @keyframes slideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+
+  /* Stat card mini — glass subtil (cohérence avec .card) */
+  .stat{font-size:20px;font-weight:700;color:var(--txt);font-variant-numeric:tabular-nums}
+  .card-mini{background:var(--glass-bg);
+    backdrop-filter:blur(16px) saturate(180%);
+    -webkit-backdrop-filter:blur(16px) saturate(180%);
+    border:1px solid var(--line);border-radius:12px;
+    padding:12px 14px;margin-bottom:8px;box-shadow:var(--shadow-sm)}
+  .charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+
+  /* ===== Stepper +/− ====================================================
+     Pour les inputs poids/reps en mode séance. Mains moites au gym = pas
+     de clavier numérique. Boutons gros (44×44 min), input centré entre,
+     fond verre cohérent avec la session focus card. */
+  .stepper {
+    display: grid;
+    grid-template-columns: 48px 1fr 48px;
+    align-items: stretch;
+    gap: 0;
+    background: rgba(255,255,255,0.18);
+    border: 1px solid rgba(255,255,255,0.28);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .stepper .step-btn {
+    background: transparent;
+    color: #fff;
+    font-size: 22px;
+    font-weight: 700;
+    padding: 0;
+    border-radius: 0;
+    border: none;
+    min-height: 48px;
+    transition: background 0.15s ease, transform 0.08s ease;
+  }
+  .stepper .step-btn:hover { background: rgba(255,255,255,0.15); transform: none; }
+  .stepper .step-btn:active { background: rgba(255,255,255,0.25); transform: scale(0.95); }
+  .stepper input[type=number] {
+    background: transparent;
+    border: none;
+    border-left: 1px solid rgba(255,255,255,0.18);
+    border-right: 1px solid rgba(255,255,255,0.18);
+    border-radius: 0;
+    color: #fff;
+    text-align: center;
+    font-size: 22px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    padding: 8px 0;
+    min-width: 0;
+    -moz-appearance: textfield;
+  }
+  .stepper input[type=number]::-webkit-outer-spin-button,
+  .stepper input[type=number]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .stepper input:focus {
+    outline: none;
+    background: rgba(255,255,255,0.1);
+  }
+
+  /* Timer */
+  .flash-red{animation:flashRed 1s ease infinite !important}
+  @keyframes flashRed{
+    0%,100%{background:linear-gradient(135deg,var(--accent-light),var(--accent))}
+    50%{background:linear-gradient(135deg,var(--danger),var(--accent-dark))}
+  }
+  /* Fires once when rest hits 0 — gentle green pulse to signal "go". */
+  .flash-green{animation:flashGreen 0.8s ease 2 !important}
+  @keyframes flashGreen{
+    0%,100%{background:linear-gradient(135deg,var(--blue) 0%,var(--blue-dark) 100%)}
+    50%{background:linear-gradient(135deg,var(--success),var(--blue-dark))}
+  }
+  .timer-hero{background:linear-gradient(135deg,var(--blue) 0%,var(--blue-dark) 100%);
+    border-radius:var(--radius-lg);padding:28px 20px;color:#fff;text-align:center;
+    box-shadow:var(--shadow-md)}
+  .timer-hero .huge{color:#fff}
+  .timer-hero .mut{color:rgba(255,255,255,0.85)}
+
+  /* Links */
+  .lnk{color:var(--blue);text-decoration:none;border-bottom:1px dotted var(--blue);cursor:pointer}
+  .lnk:hover{color:var(--accent-dark);border-color:var(--accent-dark)}
+  .danger{color:var(--danger)}
+
+  /* Swap list in modal */
+  .swap-item{display:flex;justify-content:space-between;align-items:center;padding:12px;
+    border:1px solid var(--line);border-radius:10px;margin-bottom:6px;cursor:pointer;
+    transition:all 0.1s ease}
+  .swap-item:hover{border-color:var(--blue);background:var(--blue-tint)}
+  .swap-item-name{font-weight:600;font-size:14px}
+  .swap-item-reason{display:inline-block;font-size:11px;color:var(--blue-dark);
+    background:var(--blue-tint);border:1px solid var(--blue);
+    padding:2px 8px;border-radius:999px;margin-top:4px;font-weight:500}
+  .swap-item-desc{font-size:12px;color:var(--mut);margin-top:4px}
+
+  /* Mascot reason pill */
+  .why{background:var(--accent-tint);border:1px solid var(--accent);color:var(--accent-dark);
+    font-size:12px;padding:8px 12px;border-radius:8px;margin-top:8px}
+
+  /* Mode toggle */
+  .mode-toggle{display:flex;gap:6px;background:var(--bg2);padding:4px;border-radius:12px;margin-bottom:10px}
+  .mode-toggle button{flex:1;background:transparent;color:var(--mut);
+    padding:10px 8px;font-size:12px;font-weight:600;border-radius:8px}
+  .mode-toggle button.on{background:var(--card);color:var(--txt);box-shadow:var(--shadow-sm)}
+  .mode-toggle .mode-desc{grid-column:1/-1;font-size:11px;color:var(--mut);
+    padding:4px 8px 2px;text-align:center}
+
+  /* Session focus view */
+  .focus-card{background:linear-gradient(135deg,var(--blue-dark) 0%,var(--blue) 60%,var(--accent-dark) 130%);
+    color:#fff;border:none;box-shadow:var(--shadow-md);border-radius:var(--radius-lg);
+    padding:22px 20px}
+  .focus-card h2{color:#fff;font-size:22px;font-weight:800;letter-spacing:-0.02em;
+    display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 6px}
+  .focus-exo-label{font-size:11px;font-weight:700;letter-spacing:0.1em;
+    text-transform:uppercase;opacity:0.85;margin-bottom:6px}
+  .focus-exo-desc{color:rgba(255,255,255,0.88);font-size:13px;line-height:1.45;margin:4px 0 14px}
+  .focus-note{background:rgba(255,255,255,0.18);border:1px dashed rgba(255,255,255,0.5);
+    color:#fff;font-size:13px;padding:8px 12px;border-radius:8px;margin:0 0 14px;line-height:1.4}
+  .focus-warmup{background:rgba(255,255,255,0.14);border:1px solid rgba(255,255,255,0.28);
+    color:#fff;font-size:13px;padding:10px 12px;border-radius:8px;margin:0 0 14px}
+  .focus-warmup-title{font-weight:600;margin-bottom:6px;font-size:12px;letter-spacing:.3px}
+  .focus-warmup ul{margin:0;padding-left:18px;line-height:1.6}
+  .focus-target{background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.25);
+    border-radius:12px;padding:12px 16px;margin:12px 0;font-size:18px;font-weight:700;
+    text-align:center;letter-spacing:-0.01em}
+  .focus-inputs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}
+  .focus-inputs.single{grid-template-columns:1fr}
+  .focus-input label{color:rgba(255,255,255,0.8);font-size:10px;margin-bottom:4px}
+  .focus-input input{background:rgba(255,255,255,0.95);color:var(--txt);
+    border-color:transparent;font-size:22px;font-weight:700;text-align:center;padding:14px 10px;
+    font-variant-numeric:tabular-nums}
+  .focus-card .info-btn{background:rgba(255,255,255,0.2);color:#fff;
+    padding:6px 10px;font-size:11px;font-weight:600;border:1px solid rgba(255,255,255,0.3)}
+  .focus-card .info-btn:hover{background:rgba(255,255,255,0.3)}
+  .focus-go{background:#fff !important;color:var(--blue-dark) !important;font-weight:800 !important;
+    font-size:16px !important;padding:18px !important;border-radius:12px !important;margin-top:10px}
+
+  /* Weekly volume per zone — colored progress bar with target markers.
+     Below 10 sets/wk = red (under-worked), 10-20 = green (optimal),
+     >20 = amber (overreach risk). Week-over-week delta shown on the right. */
+  .vol-row{padding:6px 0;border-bottom:1px dashed var(--line)}
+  .vol-row:last-child{border-bottom:none}
+  .vol-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px}
+  .vol-name{font-size:13px;font-weight:600;color:var(--txt)}
+  .vol-count{font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums}
+  .vol-count strong{color:var(--txt);font-size:14px}
+  .vol-count .delta{margin-left:8px;font-size:11px}
+  .vol-count .delta.up{color:var(--success)}
+  .vol-count .delta.down{color:var(--danger)}
+  .vol-bar{height:6px;background:var(--bg2);border-radius:999px;overflow:hidden;position:relative}
+  .vol-bar>i{display:block;height:100%;border-radius:999px;transition:width 0.3s ease}
+  .vol-bar.under>i{background:var(--danger)}
+  .vol-bar.ok>i{background:var(--success)}
+  .vol-bar.over>i{background:var(--warn)}
+  /* Sweet-spot markers at 10 and 20 sets (the 0..25 scale we render on). */
+  .vol-bar::before,.vol-bar::after{content:'';position:absolute;top:0;bottom:0;
+    width:1px;background:var(--line-strong);opacity:0.6}
+  .vol-bar::before{left:40%}
+  .vol-bar::after{left:80%}
+
+  /* Compact progress list */
+  .prog-row{display:grid;grid-template-columns:1fr auto;gap:8px 12px;padding:8px 2px;
+    border-bottom:1px dashed var(--line);align-items:center}
+  .prog-row:last-child{border-bottom:none}
+  .prog-row.done{opacity:0.45}
+  .prog-row.done .prog-name::before{content:'✓ ';color:var(--success)}
+  .prog-row.current .prog-name{color:var(--accent-dark);font-weight:700}
+  .prog-row.current .prog-name::before{content:'▶ ';color:var(--accent)}
+  .prog-name{font-size:13px;font-weight:500;color:var(--txt-soft)}
+  .prog-count{font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums;font-weight:600}
+  .prog-bar{grid-column:1/-1;height:4px;background:var(--bg2);border-radius:999px;overflow:hidden}
+  .prog-bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--accent));
+    border-radius:999px;transition:width 0.3s ease}
+
+  /* ===== Motion polish =================================================
+     A focused animation pass. Two ideas:
+       1. View transitions: when show() swaps section.hide, the new view
+          fades+slides in, and its direct children (cards, hero, qstats)
+          stagger in just behind it. Done with a one-shot .view-enter class
+          that show() re-triggers via a forced reflow.
+       2. Micro-interactions: buttons lift on hover and dip on press, chips
+          press in, the bottom nav active item gets a soft scale+glow, the
+          savestate pill pulses while saving. Subtle, not Disney.
+     The whole thing respects prefers-reduced-motion at the bottom — users
+     who've asked their OS for less motion get instant transitions.
+     ===================================================================== */
+
+  html { scroll-behavior: smooth }
+  body { animation: appBoot 0.45s cubic-bezier(0.22, 1, 0.36, 1) both }
+  @keyframes appBoot {
+    from { opacity: 0 }
+    to   { opacity: 1 }
+  }
+
+  /* View entrance + child stagger. Easing is "exponential out"-ish
+     (cubic-bezier(0.22, 1, 0.36, 1)) — fast start, gentle landing. */
+  .view-enter { animation: viewIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both }
+  @keyframes viewIn {
+    from { opacity: 0; transform: translateY(8px) }
+    to   { opacity: 1; transform: translateY(0) }
+  }
+  /* Stagger the first ~7 direct children. Past that, just fade in
+     together — long lists already animate on their own. */
+  .view-enter > .card,
+  .view-enter > .hero,
+  .view-enter > .qstats,
+  .view-enter > .row,
+  .view-enter > details,
+  .view-enter > .charts-grid,
+  .view-enter > .badges {
+    animation: cardIn 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .view-enter > :nth-child(1) { animation-delay: 0.04s }
+  .view-enter > :nth-child(2) { animation-delay: 0.09s }
+  .view-enter > :nth-child(3) { animation-delay: 0.14s }
+  .view-enter > :nth-child(4) { animation-delay: 0.19s }
+  .view-enter > :nth-child(5) { animation-delay: 0.24s }
+  .view-enter > :nth-child(6) { animation-delay: 0.28s }
+  .view-enter > :nth-child(7) { animation-delay: 0.32s }
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateY(14px) }
+    to   { opacity: 1; transform: translateY(0) }
+  }
+
+  /* Card hover lift — only on inputs the user is likely to interact with
+     (history details, exercise rows). The base .card stays static so the
+     UI doesn't feel jittery under the cursor. */
+  details, .exo-row {
+    transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+                box-shadow 0.2s ease, background 0.15s ease;
+  }
+  details:hover { transform: translateY(-1px) }
+  .exo-row:hover { transform: translateX(2px) }
+
+  /* Button polish — base rule is in the section above; this overrides the
+     hover/active to add a small lift and deeper press. */
+  button, .btn {
+    transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+                opacity 0.18s ease, background 0.18s ease,
+                box-shadow 0.18s ease;
+  }
+  button:hover:not(:disabled), .btn:hover { transform: translateY(-1px); opacity: 1 }
+  button:active:not(:disabled) { transform: translateY(0) scale(0.97); transition-duration: 0.08s }
+  /* Tiny buttons stay flat — translation looks jumpy at that size. */
+  button.tiny:hover:not(:disabled) { transform: none }
+
+  /* Chips: lift on hover, satisfying scale-down on press. */
+  .chip { transition: all 0.18s cubic-bezier(0.22, 1, 0.36, 1) }
+  .chip:hover { transform: translateY(-1px); border-color: var(--line-strong) }
+  .chip:active { transform: scale(0.94) }
+  .chip.on { box-shadow: 0 4px 12px rgba(38,64,139,0.25) }
+
+  /* Bottom nav: scale-up the active tab and add a soft glow. The transition
+     also covers the inactive→active flip, so tapping a tab feels like a
+     pill sliding into place. */
+  nav.bottom button {
+    transition: color 0.22s ease, background 0.22s ease,
+                transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  nav.bottom button:active { transform: scale(0.94) }
+  nav.bottom button.active { transform: translateY(-1px) }
+
+  /* Inputs: focus ring "expands" rather than just appearing. */
+  input[type=email], input[type=password], input[type=number],
+  input[type=text], select, textarea {
+    transition: border-color 0.18s ease, box-shadow 0.18s ease,
+                background 0.18s ease;
+  }
+  input:focus, select:focus, textarea:focus {
+    box-shadow: 0 0 0 3px rgba(38,64,139,0.15);
+  }
+
+  /* Pills get a subtle scale-in when they (re)appear in the DOM. Renders
+     after every list rebuild — short enough to feel snappy, not noisy. */
+  .pill { animation: pillIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) both }
+  @keyframes pillIn {
+    from { opacity: 0; transform: scale(0.85) }
+    to   { opacity: 1; transform: scale(1) }
+  }
+
+  /* Heatmap: cells lift slightly on hover so users can target a day. */
+  .heatmap-cell { transition: transform 0.15s ease, box-shadow 0.15s ease }
+  .heatmap-cell:hover { transform: scale(1.18); z-index: 2; box-shadow: var(--shadow-sm) }
+
+  /* Savestate pill — when class "saving" is added by app.js, gently pulse
+     so the user knows we're flushing. The class doesn't exist yet; adding
+     the rule preemptively lets us light it up later without a CSS roundtrip. */
+  .savestate { transition: opacity 0.2s ease, transform 0.2s ease }
+  .savestate.saving { animation: pulseDim 1.2s ease-in-out infinite }
+  @keyframes pulseDim {
+    0%, 100% { opacity: 0.6 }
+    50%      { opacity: 1 }
+  }
+
+  /* Set rows: when the user logs a set and we re-render, the new completed
+     row gets a brief highlight. Gentle, fades out fast. */
+  .set-row.done { animation: setDone 0.6s ease both }
+  @keyframes setDone {
+    0%   { background: var(--success-tint) }
+    100% { background: transparent }
+  }
+
+  /* Exo-detail navigation: history rows expand smoothly thanks to the
+     details transition above. Make the chevron rotate with the same easing
+     as everything else. */
+  details summary::before { transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1) }
+
+  /* Modal backdrop: already animated; tighten the easing to match. */
+  .modal { animation: modalIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) both }
+  @keyframes modalIn {
+    from { opacity: 0; transform: translateY(20px) scale(0.97) }
+    to   { opacity: 1; transform: translateY(0)    scale(1)    }
+  }
+
+  /* ===== Accessibility =================================================
+     Phase 1 a11y bloc. Three things going on here:
+       1. A universal focus-visible ring for keyboard users (no ring on
+          mouse clicks). Color uses the accent so it's visible on both
+          light and dark backgrounds.
+       2. Touch-target minimums (WCAG 2.5.5 wants ≥44×44px). Chip and
+          tap-zone now meet it; bottom nav buttons get a min-height bump.
+       3. Skip-to-content link, visible only on focus, lets keyboard users
+          jump past the header straight to <main>.
+     ===================================================================== */
+
+  :root {
+    /* Le focus ring utilise le coral pour rester cohérent avec la signature
+       Atmos. Sur fond sombre il pop, sur fond clair (coral assombri) il
+       reste bien visible — vérifié à 4.5:1 minimum sur les deux. */
+    --focus: var(--accent);
+  }
+
+  /* Universal focus ring on every interactive element. :focus-visible
+     means it only shows for keyboard navigation, not mouse clicks. */
+  :focus { outline: none; }
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: inherit;
+  }
+  /* Inputs already have a custom border/box-shadow focus state — keep it
+     but layer the outline on top so the cue is consistent app-wide. */
+  input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+  }
+
+  /* When a chip or button.tiny becomes a real <button>, the base button
+     rule's bg/color/padding shouldn't override the chip styling.
+     Specificity already handles that, but exo-row and tap-zone need an
+     explicit reset because they were <div>s before — buttons inherit a
+     centered alignment we don't want. */
+  button.exo-row, button.tap-zone {
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    font: inherit;
+    border-radius: 0;
+    padding: 0;
+  }
+  /* exo-row was a flex row; the button needs to keep that. */
+  button.exo-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 12px 4px;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    transition: background 0.1s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  button.exo-row:last-child { border-bottom: none; }
+  button.exo-row:hover { background: var(--bg2); }
+  /* tap-zone keeps its round-pad styling; just override defaults. */
+  button.tap-zone {
+    background: radial-gradient(circle at 30% 30%, var(--line), var(--line-strong));
+    border-radius: 50%;
+    text-align: center;
+    font-weight: 800;
+    font-size: 22px;
+  }
+
+  /* Touch target minimums. Chips, tiny buttons and bottom nav were under
+     44px. Bumping height here without changing layout. */
+  .chip {
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+  }
+  button.tiny {
+    min-height: 32px;
+  }
+  nav.bottom button {
+    min-height: 56px;
+  }
+
+  /* Skip-to-content link. Hidden until tabbed to, then sits above
+     everything. */
+  .skip-link {
+    position: absolute;
+    top: -40px;
+    left: 8px;
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    padding: 8px 14px;
+    border-radius: 8px;
+    z-index: 100;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 600;
+    transition: top 0.15s ease;
+  }
+  .skip-link:focus { top: 8px; }
+
+  /* Visually hidden but available to screen readers. Used for extra
+     context labels we don't want sighted users to see. */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* ===== Toast system =================================================
+     Toasts non-bloquants pour les confirmations success/info. Pile en haut
+     à droite (sous le savestate), apparition slide-down, auto-dismiss
+     3.5s. Pour les actions sensibles (suppression, mot de passe) on garde
+     le modal qui exige un clic explicite — les toasts c'est pour les
+     "OK ça a marché" qu'on n'a pas envie de bloquer.
+     ===================================================================== */
+  .toast-stack {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    left: 12px;
+    z-index: 90;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+    /* Sur grand écran, on cale à droite */
+  }
+  @media (min-width: 540px) {
+    .toast-stack { left: auto; max-width: 380px; }
+  }
+  .toast {
+    pointer-events: auto;
+    background: var(--glass-bg-strong);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 12px;
+    padding: 12px 14px 12px 14px;
+    box-shadow: var(--shadow-md);
+    color: var(--txt);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.4;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    animation: toastIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .toast.success { border-left-color: var(--success); }
+  .toast.error   { border-left-color: var(--danger); }
+  .toast.info    { border-left-color: var(--blue); }
+  .toast-icon {
+    flex-shrink: 0;
+    width: 18px; height: 18px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--bg);
+    font-size: 12px;
+    font-weight: 700;
+    margin-top: 1px;
+  }
+  .toast.success .toast-icon { background: var(--success); }
+  .toast.error   .toast-icon { background: var(--danger); }
+  .toast.info    .toast-icon { background: var(--blue); }
+  .toast-body { flex: 1; min-width: 0; }
+  .toast-title { font-weight: 600; margin-bottom: 2px; }
+  .toast-msg   { color: var(--txt-soft); font-size: 13px; font-weight: 400; }
+  .toast-close {
+    background: transparent; color: var(--mut); border: none;
+    padding: 0 4px; font-size: 16px; cursor: pointer; line-height: 1;
+    border-radius: 4px; min-height: auto;
+  }
+  .toast-close:hover { color: var(--txt); background: transparent; }
+  .toast.toast-out { animation: toastOut 0.24s ease both; }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateY(-12px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes toastOut {
+    from { opacity: 1; transform: translateY(0); max-height: 100px; }
+    to   { opacity: 0; transform: translateY(-12px); max-height: 0;
+           padding-top: 0; padding-bottom: 0; margin-top: -8px; }
+  }
+
+  /* ===== Skeleton loaders ============================================
+     Placeholders pour les fetch initiaux. Animation shimmer subtile —
+     uniformiser avec le ton glass de l'app. */
+  .skel {
+    background: linear-gradient(90deg,
+      var(--bg2) 0%, var(--line) 50%, var(--bg2) 100%);
+    background-size: 200% 100%;
+    border-radius: 8px;
+    animation: skelShimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes skelShimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  .skel-line { height: 12px; margin: 6px 0; }
+  .skel-line.short { width: 40%; }
+  .skel-line.med   { width: 70%; }
+  .skel-line.full  { width: 100%; }
+  .skel-circle {
+    width: 200px; height: 200px;
+    border-radius: 50%;
+    margin: 8px auto;
+  }
+
+  /* ===== Settings list (pattern iOS/Android) =========================
+     Liste regroupée de réglages. Chaque ligne est tappable, alignée à
+     gauche avec icône → label/sublabel → chevron. Convention standard
+     mobile : pas de boutons "outline" empilés, mais une liste avec
+     hiérarchie visuelle claire (sections groupées + headers majuscules).
+     ==================================================================== */
+  .account-id {
+    text-align: center;
+    padding: 18px 18px 16px;
+  }
+  .account-id-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--mut);
+    margin: 0 0 6px;
+    font-weight: 600;
+  }
+  .account-id-email {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--txt);
+    margin: 0;
+    word-break: break-all;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .settings-section-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--mut);
+    font-weight: 600;
+    padding: 14px 16px 6px;
+    margin-top: 4px;
+  }
+  .settings-section-title.danger { color: var(--danger); }
+
+  .settings-list {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .settings-list.danger-zone {
+    border-color: var(--danger);
+    background: var(--danger-tint);
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .settings-list { background: var(--card); }
+  }
+
+  /* Chaque ligne — bouton ou anchor. Reset des styles par défaut, ajout
+     d'un layout flex stable. */
+  a.settings-row,
+  button.settings-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 14px 16px;
+    background: transparent;
+    border: none;
+    border-top: 1px solid var(--line);
+    border-radius: 0;
+    text-align: left;
+    color: var(--txt);
+    font-size: 15px;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    min-height: 60px;
+    transition: background 0.15s ease;
+  }
+  .settings-list > a.settings-row:first-child,
+  .settings-list > button.settings-row:first-child {
+    border-top: none;
+  }
+  a.settings-row:hover,
+  button.settings-row:hover {
+    background: var(--bg2);
+    transform: none; opacity: 1;
+  }
+  a.settings-row:active,
+  button.settings-row:active { background: var(--line); transform: none; }
+
+  .settings-row .row-icon {
+    flex-shrink: 0;
+    width: 36px; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 10px;
+    background: var(--accent-tint);
+    color: var(--accent);
+  }
+  .settings-row .row-text {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .settings-row .row-label {
+    color: var(--txt);
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1.3;
+  }
+  .settings-row .row-sub {
+    color: var(--mut);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.35;
+  }
+  .settings-row .row-chevron {
+    color: var(--mut);
+    font-size: 22px;
+    line-height: 1;
+    flex-shrink: 0;
+    font-weight: 400;
+  }
+
+  /* Variante danger : icône en danger-tint, label rouge — reste visible
+     mais distinctement marqué comme destructif. */
+  .settings-row.danger { color: var(--danger); }
+  .settings-row.danger .row-icon {
+    background: var(--danger-tint);
+    color: var(--danger);
+  }
+  .settings-row.danger .row-label { color: var(--danger); }
+  .settings-row.danger:hover { background: var(--danger-tint); }
+
+  @media (prefers-color-scheme: light) {
+    .settings-row.danger:hover { background: var(--danger-tint); }
+  }
+
+  /* ===== Empty states illustrés =====================================
+     Quand une section est vide (pas d'historique, pas de badge), afficher
+     une illustration légère + un CTA plutôt qu'un simple "vide". */
+  .empty-state {
+    text-align: center;
+    padding: 24px 16px;
+    color: var(--txt-soft);
+  }
+  .empty-state-icon {
+    width: 64px; height: 64px;
+    margin: 0 auto 12px;
+    border-radius: 50%;
+    background: var(--accent-tint);
+    color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .empty-state-title {
+    font-size: 15px; font-weight: 600;
+    color: var(--txt); margin-bottom: 4px;
+  }
+  .empty-state-msg { font-size: 13px; line-height: 1.5; margin-bottom: 14px; }
+  .empty-state .btn,
+  .empty-state button { min-width: 160px; }
+
+  /* ===== Modal system (a11y) ===========================================
+     Replaces the 17 native prompt/alert/confirm calls scattered through
+     app.js. The pattern is: a backdrop (click-to-dismiss for non-critical
+     dialogs), centered card with role="dialog" aria-modal="true", focus
+     trap inside, ESC to close, focus restored to the trigger when the
+     dialog closes. JS implementation lives in app.js — these are just
+     the visual rules.
+     ===================================================================== */
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(14, 20, 40, 0.55);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px; z-index: 100;
+    animation: fadeIn 0.18s ease;
+  }
+  .modal-card {
+    background: var(--glass-bg-strong);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    padding: 22px;
+    max-width: 460px;
+    width: 100%;
+    max-height: 85vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-md);
+    animation: modalIn 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .modal-card { background: var(--card); }
+  }
+  .modal-card h2 {
+    margin: 0 0 8px;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--txt);
+  }
+  .modal-card .modal-body { color: var(--txt-soft); font-size: 14px; line-height: 1.55; margin: 0 0 14px; }
+  .modal-card .modal-actions {
+    display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap;
+  }
+  .modal-card .modal-actions button { min-width: 92px; }
+  .modal-card .field { margin-bottom: 10px; }
+  .modal-card .err { color: var(--danger); font-size: 13px; min-height: 18px; font-weight: 600; margin: 4px 0 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#mainContent">Aller au contenu</a>
+<div id="saveState" class="savestate hide" role="status" aria-live="polite" aria-atomic="true">💾</div>
+<div id="offlineBar" class="offline-bar hide" role="alert" aria-live="assertive">
+  <span aria-hidden="true">📡 </span>Hors ligne — tu peux continuer, les logs seront synchronisés au retour du réseau.
+</div>
+<!-- Stack des toasts. role="status" + aria-live="polite" pour que le lecteur
+     d'écran annonce les nouveaux toasts sans interrompre l'utilisateur. -->
+<div id="toastStack" class="toast-stack" role="status" aria-live="polite" aria-atomic="false"></div>
+<header>
+  <div class="hdr-title">
+    <h1><span aria-hidden="true">🏋️ </span>Coach Adaptatif</h1>
+    <div class="sub" id="hdrSub">Chargement…</div>
+  </div>
+  <a id="adminLink" href="/admin" class="admin-chip hide" rel="noopener"><span aria-hidden="true">🛡 </span>admin</a>
+</header>
+
+<main id="mainContent" tabindex="-1">
+  <!-- AUTH — login only. Account creation is handled exclusively by an admin
+       via the /admin page. See admin.html + admin.js. -->
+  <section id="viewAuth" class="hide">
+    <div class="card">
+      <h2 style="margin-bottom:12px">Se connecter</h2>
+      <div class="field"><label for="authEmail">Email</label><input type="email" id="authEmail" autocomplete="email" spellcheck="false"></div>
+      <div class="field"><label for="authPass">Mot de passe</label><input type="password" id="authPass" autocomplete="current-password"></div>
+      <button id="authSubmit" class="w-full magenta">Se connecter</button>
+      <div class="err" id="authErr"></div>
+      <p class="mut" id="authHint" style="font-size:12px;margin-top:10px">
+        Les comptes sont créés par l'administrateur. Si tu n'as pas encore de compte, contacte-le.
+      </p>
+      <p class="mut" style="font-size:12px;margin-top:14px;border-top:1px solid var(--line);padding-top:12px;line-height:1.55">
+        En te connectant, tu reconnais avoir pris connaissance de la
+        <a href="/privacy" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:underline">politique
+        de confidentialité</a>. Coach Adaptatif traite des données de santé (poids, taille, douleurs,
+        ressenti) sur la base de ton consentement explicite, demandé après connexion. Aucun tracker,
+        aucun partage publicitaire. Contact RGPD&nbsp;:
+        <a href="mailto:joly.jonathan@protonmail.com" style="color:var(--blue);text-decoration:underline">joly.jonathan@protonmail.com</a>.
+      </p>
+    </div>
+  </section>
+
+  <!-- FORCED 2FA ENROLLMENT — shown when the server requires 2FA and the user
+       has not yet enrolled. Every protected endpoint (/api/data, admin, etc.)
+       returns 403 needsEnroll2FA until they finish here, so this isn't just
+       UX paint, it's the actual gate. -->
+  <section id="viewEnroll2FA" class="hide">
+    <div class="card">
+      <h2 id="twofaTitle">🔐 Vérification en 2 étapes — obligatoire</h2>
+      <p id="twofaIntro">
+        Scanne le QR code avec une appli d'authentification, puis saisis le code à
+        6 chiffres pour confirmer.
+      </p>
+      <p class="mut" style="font-size:13px">
+        Apps recommandées : <strong>Google Authenticator</strong>, <strong>Authy</strong>,
+        <strong>1Password</strong>, <strong>Bitwarden</strong>.
+      </p>
+
+      <!-- QR code container. The SVG is generated client-side by qrcode.js
+           from the otpauth:// URL returned by /api/2fa/setup. White
+           background is hard-coded so dark-mode users still get a scannable
+           code (cameras need the contrast). -->
+      <div id="twofaQrWrap" style="display:flex;justify-content:center;margin:14px 0">
+        <div id="twofaQr" style="background:#fff;padding:12px;border-radius:8px;
+             min-width:200px;min-height:200px;display:flex;align-items:center;
+             justify-content:center;color:#666;font-size:13px">…</div>
+      </div>
+
+      <div class="field">
+        <label>Ou saisis cette clé manuellement</label>
+        <code id="twofaSecret" style="display:block;padding:10px;background:var(--bg2);
+              border:1px solid var(--line);border-radius:8px;font-family:ui-monospace,
+              SFMono-Regular,Menlo,monospace;font-size:13px;letter-spacing:1px;
+              word-break:break-all;text-align:center">…</code>
+      </div>
+
+      <div class="field">
+        <label for="twofaCode">Code à 6 chiffres</label>
+        <input type="text" id="twofaCode" inputmode="numeric" autocomplete="one-time-code"
+               maxlength="6" pattern="[0-9]{6}" placeholder="123456"
+               style="font-size:18px;letter-spacing:4px;text-align:center">
+      </div>
+
+      <p id="twofaError" class="err"></p>
+
+      <div class="row">
+        <button id="twofaVerifyBtn">Vérifier et activer</button>
+        <button id="twofaCancelBtn" class="sec">Annuler</button>
+      </div>
+
+      <p class="mut" style="font-size:12px;margin-top:12px">
+        Tu ne peux pas accéder au reste de l'app tant que cette étape n'est pas
+        terminée. Tu peux toujours te déconnecter via le bouton « Annuler ».
+      </p>
+    </div>
+  </section>
+
+  <!-- HEALTH-DATA CONSENT (RGPD art. 9 + notice d'information art. 13)
+       Shown once after 2FA enrollment. Server-side gate in handleSaveData
+       refuses to persist any health data until POST /api/consent has been
+       called with {accept:true}. The "Refuser" path logs the user out so
+       no half-consented account exists. -->
+  <section id="viewConsent" class="hide">
+    <div class="card">
+      <h2 style="margin-bottom:8px">🔐 Tes données &amp; ton consentement</h2>
+      <p class="mut" style="font-size:13px;margin-top:0">
+        Avant d'aller plus loin, on doit te faire signer (au sens RGPD) une seule chose&nbsp;:
+        ton accord pour qu'on traite tes données de santé. C'est obligatoire et c'est rapide.
+      </p>
+
+      <div style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px;margin:14px 0;font-size:14px;line-height:1.55">
+        <p style="margin:0 0 10px"><strong>Ce qu'on collecte&nbsp;:</strong></p>
+        <ul style="margin:0 0 12px;padding-left:20px">
+          <li><strong>Identifiants</strong>&nbsp;: ton email et un hash de ton mot de passe.</li>
+          <li><strong>Données de santé</strong> (catégorie sensible RGPD)&nbsp;: âge, sexe, poids,
+            taille, douleurs, allergies, ressenti d'effort (RPE), courbatures, notes.</li>
+          <li><strong>Tes séances</strong>&nbsp;: exercices, charges, répétitions, ajustements
+            algorithmiques générés.</li>
+        </ul>
+        <p style="margin:0 0 10px"><strong>Pourquoi&nbsp;:</strong> adapter ton programme à ton profil
+          et à ton historique. Aucun usage commercial, aucun partage publicitaire, aucun tracker.</p>
+        <p style="margin:0 0 10px"><strong>Combien de temps&nbsp;:</strong> tant que ton compte
+          existe. Tu peux le supprimer en un clic depuis ton profil.</p>
+        <p style="margin:0 0 10px"><strong>Décision automatisée&nbsp;:</strong> l'app calcule des
+          ajustements (deload, swap, modulation) à partir de tes données. Tu peux désactiver
+          ça plus tard dans «&nbsp;Mes données et droits&nbsp;».</p>
+        <p style="margin:0">
+          <strong>Tes droits&nbsp;:</strong> accès, rectification, effacement, portabilité, opposition.
+          Détails complets dans la
+          <a href="/privacy" target="_blank" rel="noopener" style="color:var(--blue)">politique de confidentialité</a>.
+        </p>
+      </div>
+
+      <label class="consent-row" for="consentHealth"
+             style="display:flex;align-items:flex-start;gap:10px;padding:12px;background:var(--bg2);
+                    border:1px solid var(--line);border-radius:10px;cursor:pointer;font-size:14px;line-height:1.45">
+        <input type="checkbox" id="consentHealth"
+               style="margin-top:3px;width:18px;height:18px;flex:0 0 auto;cursor:pointer">
+        <span>
+          Je consens explicitement à ce que Coach Adaptatif traite mes
+          <strong>données de santé</strong> (article 9 RGPD) pour adapter mon programme
+          d'entraînement. Je peux retirer ce consentement à tout moment en supprimant mon
+          compte. J'ai pris connaissance de la
+          <a href="/privacy" target="_blank" rel="noopener" style="color:var(--blue)">politique de confidentialité</a>.
+        </span>
+      </label>
+
+      <p id="consentError" class="err" style="margin-top:8px"></p>
+
+      <div class="row" style="margin-top:14px">
+        <button id="consentAcceptBtn" class="magenta flex1">Continuer</button>
+        <button id="consentRefuseBtn" class="sec">Refuser et me déconnecter</button>
+      </div>
+
+      <p class="mut" style="font-size:11px;margin-top:14px;text-align:center">
+        Contact RGPD&nbsp;:
+        <a href="mailto:joly.jonathan@protonmail.com" style="color:var(--blue)">joly.jonathan@protonmail.com</a>
+      </p>
+    </div>
+  </section>
+
+  <!-- ONBOARDING -->
+  <section id="viewOnboarding" class="hide">
+    <div class="card">
+      <h2>👋 Bienvenue</h2>
+      <p>Quelques questions pour configurer ton programme. Ensuite il s'adapte automatiquement à chaque séance.</p>
+    </div>
+    <div class="card">
+      <h2>1. Ton profil</h2>
+      <div class="grid2">
+        <div class="field"><label for="onbAge">Âge</label><input type="number" id="onbAge" min="15" max="90" value="28"></div>
+        <div class="field"><label for="onbWeight">Poids (kg)</label><input type="number" id="onbWeight" min="30" max="200" value="75"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label for="onbHeight">Taille (cm)</label><input type="number" id="onbHeight" min="100" max="230" value="175"></div>
+        <div class="field"><label for="onbSex">Sexe</label>
+          <select id="onbSex">
+            <option value="h">Homme</option><option value="f">Femme</option><option value="x">Autre / non précisé</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="onbLevel">Niveau</label>
+        <select id="onbLevel">
+          <option value="0">Débutant (&lt; 3 mois)</option>
+          <option value="1" selected>Intermédiaire (3 mois – 2 ans)</option>
+          <option value="2">Confirmé (2 ans +)</option>
+        </select>
+      </div>
+    </div>
+    <!-- ===== Mode rééducation ============================================
+         Section dédiée — activable par toggle. Quand actif, l'app remplace
+         la séance normale par une séance rééduc générée à partir des
+         zones touchées et de la phase courante (calculée à partir de la
+         date de blessure). Voir public/rehab.js pour la logique métier.
+         ==================================================================== -->
+    <div class="card" id="rehabCard">
+      <h2 style="margin-bottom:6px">🩹 Mode rééducation</h2>
+      <p class="mut" style="font-size:13px;margin:0 0 12px;line-height:1.5">
+        Active ce mode après un accident, une blessure, ou en post-opératoire (avec
+        l'accord de ton kiné/médecin). L'app remplace tes séances normales par des
+        séances de rééducation adaptées aux zones touchées et à ta phase de
+        cicatrisation.
+      </p>
+      <button id="rehabToggleBtn" type="button" class="settings-row" aria-pressed="false"
+              style="background:var(--bg2);border:1px solid var(--line);border-radius:10px;width:100%">
+        <span class="row-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+            <circle cx="12" cy="12" r="6"/>
+          </svg>
+        </span>
+        <span class="row-text">
+          <span class="row-label" id="rehabToggleLabel">Activer le mode rééduc</span>
+          <span class="row-sub" id="rehabToggleSub">Désactivé — séances normales d'entraînement</span>
+        </span>
+        <span class="row-chevron" aria-hidden="true" id="rehabToggleDot">○</span>
+      </button>
+
+      <!-- Volet de configuration : visible uniquement quand le mode est actif. -->
+      <div id="rehabConfig" class="hide" style="margin-top:14px">
+        <div class="field">
+          <label for="rehabInjuryDate">Date de l'accident / blessure</label>
+          <input type="date" id="rehabInjuryDate">
+        </div>
+
+        <label style="margin-top:8px;display:block">Zones touchées</label>
+        <p class="mut" style="font-size:12px;margin:-2px 0 8px">Coche toutes les zones concernées.</p>
+        <div id="rehabZones" class="chip-row" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+
+        <div class="field" style="margin-top:14px">
+          <label for="rehabPhaseSelect">Phase courante</label>
+          <select id="rehabPhaseSelect">
+            <option value="auto">Auto (selon la date)</option>
+            <option value="aigue">Aiguë — repos + mobilité douce</option>
+            <option value="subaigue">Sub-aiguë — isométriques + amplitude</option>
+            <option value="retour">Retour — reprise progressive</option>
+          </select>
+          <p class="mut" id="rehabPhaseHint" style="font-size:12px;margin:6px 0 0;line-height:1.5">
+            Phase calculée automatiquement à partir de la date.
+          </p>
+        </div>
+
+        <div style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;margin-top:12px;font-size:12.5px;line-height:1.5">
+          <strong>⚠️ Rappel&nbsp;:</strong> ces séances ne remplacent pas un suivi
+          kiné/médical. Si une douleur apparaît ou s'aggrave, arrête et consulte.
+          <button id="rehabReadDisclaimerBtn" type="button"
+                  style="background:none;border:none;color:var(--blue);text-decoration:underline;
+                         padding:0;cursor:pointer;font-size:inherit;margin-left:4px">
+            Voir l'avertissement complet
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Suivi corporel =============================================
+         Pesées et mensurations. Stockés dans S.body sur le data file
+         utilisateur (whitelist serveur). Sparkline du poids + moyenne
+         mobile 4 semaines pour ignorer les variations d'eau.
+         ==================================================================== -->
+    <div class="card" id="bodyTrackingCard">
+      <h2 style="margin-bottom:6px">📏 Suivi corporel</h2>
+      <p class="mut" style="font-size:13px;margin:0 0 12px;line-height:1.5">
+        Logge ton poids hebdo et tes mensurations pour visualiser l'évolution.
+        La courbe du poids ignore les pics liés à l'hydratation grâce à une
+        moyenne mobile sur 4 semaines.
+      </p>
+      <div id="bodyWeightSparkline" style="margin-bottom:8px"></div>
+      <div id="bodyLastEntry" class="mut" style="font-size:12px;margin-bottom:10px"></div>
+      <div class="row">
+        <button id="bodyLogWeightBtn" type="button" class="magenta flex1">⚖️ Pesée</button>
+        <button id="bodyLogMeasureBtn" type="button" class="sec flex1">📐 Mensurations</button>
+      </div>
+      <div class="row mt8">
+        <button id="bodyLogPhysioBtn" type="button" class="sec flex1">💗 Physio (HRV / sommeil)</button>
+        <button id="bodyImportCsvBtn" type="button" class="sec flex1">📥 Importer CSV</button>
+      </div>
+      <input type="file" id="bodyImportCsvInput" accept=".csv,text/csv" style="display:none">
+
+      <!-- Intégrations live (Oura + webhook générique) -->
+      <div id="physioIntegrationsBox" style="margin-top:12px;padding:12px;
+           background:var(--bg2);border:1px solid var(--line);border-radius:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px">
+            Wearables &amp; santé
+          </div>
+          <span class="mut" style="font-size:11px">2 services</span>
+        </div>
+        <div id="physioIntegrationsBody"><span class="mut" style="font-size:12px">Chargement…</span></div>
+      </div>
+      <button id="bodyHistoryBtn" type="button" class="lnk w-full"
+              style="background:none;border:none;color:var(--mut);cursor:pointer;text-decoration:underline;
+                     font-size:12px;margin-top:8px;padding:4px">
+        Voir l'historique complet
+      </button>
+    </div>
+
+    <div class="card">
+      <h2>2. Tes objectifs</h2>
+      <div id="onbGoals">
+        <button type="button" class="chip" data-goal="force">Force</button>
+        <button type="button" class="chip" data-goal="hypertrophie">Hypertrophie</button>
+        <button type="button" class="chip" data-goal="endurance">Endurance muscu</button>
+        <button type="button" class="chip" data-goal="perte_gras">Perte de gras</button>
+        <button type="button" class="chip" data-goal="forme">Forme générale</button>
+        <button type="button" class="chip" data-goal="puissance" title="Explosivité, vitesse — sport athlétique">Puissance</button>
+        <button type="button" class="chip" data-goal="mobilite" title="Souplesse, amplitude articulaire">Mobilité</button>
+        <button type="button" class="chip" data-goal="debutant" title="Apprentissage du mouvement, ranges plus stricts pour ancrer l'équilibre">Débutant</button>
+        <button type="button" class="chip" data-goal="competition" title="Préparation d'une compétition — asymétries volontaires tolérées">Compétition</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>3. Matériel dispo</h2>
+      <p class="mut" style="margin:-4px 0 10px">Coche tout ce que tu as. On n'affichera que les exos que tu peux faire.</p>
+      <div id="onbGear">
+        <button type="button" class="chip" data-gear="pdc">Poids du corps</button>
+        <button type="button" class="chip" data-gear="halteres">Haltères</button>
+        <button type="button" class="chip" data-gear="barre">Barre / rack</button>
+        <button type="button" class="chip" data-gear="traction">Barre traction</button>
+        <button type="button" class="chip" data-gear="elastiques">Élastiques</button>
+        <button type="button" class="chip" data-gear="kettlebell">Kettlebell</button>
+        <button type="button" class="chip" data-gear="banc">Banc (plat / inclinable)</button>
+        <button type="button" class="chip" data-gear="trx">Sangles TRX</button>
+        <button type="button" class="chip" data-gear="machine">Machines de salle</button>
+      </div>
+      <div class="grid2 mt10">
+        <div class="field">
+          <label for="onbMaxHalteres">Haltères max (kg par main)</label>
+          <input type="number" id="onbMaxHalteres" min="0" max="60" step="0.5" placeholder="ex: 15">
+        </div>
+        <div class="field">
+          <label for="onbMaxBarre">Barre max avec disques (kg)</label>
+          <input type="number" id="onbMaxBarre" min="0" max="300" step="2.5" placeholder="ex: 80">
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>4. Fréquence</h2>
+      <div class="grid2">
+        <div class="field">
+          <label for="onbFreq">Séances / sem.</label>
+          <select id="onbFreq">
+            <option>2</option><option selected>3</option><option>4</option><option>5</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="onbDur">Durée / séance (min)</label>
+          <select id="onbDur">
+            <option>30</option><option selected>45</option><option>60</option><option>75</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>5. 🥗 Alimentation</h2>
+      <p>On s'en sert pour personnaliser la récup et les conseils de séance.</p>
+      <div class="field">
+        <label for="onbDiet">Régime</label>
+        <select id="onbDiet">
+          <option value="omni" selected>Omnivore</option>
+          <option value="flex">Flexitarien</option>
+          <option value="vegetarien">Végétarien</option>
+          <option value="vegan">Vegan</option>
+          <option value="autre">Autre</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="onbNutGoal">Objectif nutritionnel</label>
+        <select id="onbNutGoal">
+          <option value="maintien" selected>Maintien</option>
+          <option value="prise">Prise de masse (surplus)</option>
+          <option value="seche">Sèche / perte de gras (déficit)</option>
+          <option value="recomp">Recomposition</option>
+        </select>
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label for="onbMeals">Repas / jour</label>
+          <select id="onbMeals">
+            <option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="onbWater">Eau (L / jour)</label>
+          <input type="number" id="onbWater" min="0" max="8" step="0.5" value="2">
+        </div>
+      </div>
+      <label>Allergies / intolérances</label>
+      <div id="onbAllergies">
+        <button type="button" class="chip" data-pain="lactose">Lactose</button>
+        <button type="button" class="chip" data-pain="gluten">Gluten</button>
+        <button type="button" class="chip" data-pain="arachide">Arachide</button>
+        <button type="button" class="chip" data-pain="fruits_mer">Fruits de mer</button>
+        <button type="button" class="chip" data-pain="oeuf">Œuf</button>
+        <button type="button" class="chip" data-pain="soja">Soja</button>
+        <button type="button" class="chip" data-pain="fruits_coque">Fruits à coque</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>6. Zones à éviter aujourd'hui</h2>
+      <p>On décale les exos qui sollicitent ces zones sur la prochaine séance.</p>
+      <div id="onbPain">
+        <button type="button" class="chip" data-pain="epaule">Épaule</button>
+        <button type="button" class="chip" data-pain="dos">Dos / lombaires</button>
+        <button type="button" class="chip" data-pain="genou">Genou</button>
+        <button type="button" class="chip" data-pain="coude">Coude</button>
+        <button type="button" class="chip" data-pain="poignet">Poignet</button>
+      </div>
+    </div>
+    <button id="onbDone" class="w-full magenta">Enregistrer mon profil</button>
+
+    <!-- ===== Account / Settings ============================================
+         Section Compte regroupée en bas du Profil (convention mobile+web) :
+         identité de session en haut, sécurité (mot de passe + 2FA), données
+         (export), action de session (déconnexion), et zone dangereuse en
+         bas. Pattern settings-list iOS/Android : chaque ligne est un bouton
+         à pleine largeur avec icône, label, sous-label, chevron.
+         ==================================================================== -->
+    <div class="card account-id">
+      <p class="account-id-label">Connecté en tant que</p>
+      <p class="account-id-email" id="accountEmail">—</p>
+    </div>
+
+    <div class="settings-section-title">Sécurité</div>
+    <div class="settings-list">
+      <button id="changePwBtn" type="button" class="settings-row">
+        <span class="row-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+        </span>
+        <span class="row-text">
+          <span class="row-label">Mot de passe</span>
+          <span class="row-sub">Changer ton mot de passe</span>
+        </span>
+        <span class="row-chevron" aria-hidden="true">›</span>
+      </button>
+      <button id="twofaBtn" type="button" class="settings-row">
+        <span class="row-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2 4 5v6c0 5.5 3.5 10 8 11 4.5-1 8-5.5 8-11V5l-8-3z"/>
+          </svg>
+        </span>
+        <span class="row-text">
+          <span class="row-label">Vérification en 2 étapes</span>
+          <span class="row-sub">Activer ou désactiver TOTP</span>
+        </span>
+        <span class="row-chevron" aria-hidden="true">›</span>
+      </button>
+    </div>
+
+    <div class="settings-section-title">Données</div>
+    <div class="settings-list">
+      <a id="exportBtn" href="/api/export" class="settings-row">
+        <span class="row-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/>
+          </svg>
+        </span>
+        <span class="row-text">
+          <span class="row-label">Exporter mes données</span>
+          <span class="row-sub">Télécharger un JSON complet</span>
+        </span>
+        <span class="row-chevron" aria-hidden="true">↓</span>
+      </a>
+    </div>
+
+    <!-- ===== Mes données et droits (RGPD) =================================
+         Section dédiée Article 12-22 RGPD — informe l'utilisateur de ses
+         droits, expose le toggle d'opposition à la décision automatisée
+         (art. 22), et liste les données détenues. Volontairement séparée
+         de "Données" (export technique) pour la lisibilité juridique.
+         ==================================================================== -->
+    <div class="settings-section-title">Préférences</div>
+    <div class="settings-list">
+      <button id="advancedModeBtn" type="button" class="settings-row" aria-pressed="true">
+        <span class="row-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            <circle cx="12" cy="12" r="4"/>
+          </svg>
+        </span>
+        <span class="row-text">
+          <span class="row-label">Mode avancé</span>
+          <span class="row-sub" id="advancedModeSub">Activé (défaut) — intervalles bayésiens complets, statistiques détaillées</span>
+        </span>
+        <span class="row-chevron" aria-hidden="true" id="advancedModeDot" style="color:var(--accent)">●</span>
+      </button>
+    </div>
+
+    <!-- Pondération temporelle des key lifts (programming + bayesian).
+         Pilote pickKeyLifts() : à quelle vitesse l'app oublie tes anciens
+         exos quand tu changes de programme. -->
+    <div style="margin-top:10px;padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:10px">
+      <div style="font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">
+        Mémoire des exos principaux
+      </div>
+      <p class="mut" style="font-size:12px;margin:0 0 8px;line-height:1.5">
+        Quand tu changes de programme, à quelle vitesse l'app considère qu'un
+        ancien exo n'est plus représentatif&nbsp;? La demi-vie ci-dessous est le
+        délai après lequel un set ne compte plus que pour la moitié.
+      </p>
+      <div id="keyLiftHalfLifeRow" class="gear-today" style="display:flex;flex-wrap:wrap;gap:6px">
+        <button type="button" class="chip" data-halflife="30">30j · Réactif</button>
+        <button type="button" class="chip on" data-halflife="60">60j · Équilibré</button>
+        <button type="button" class="chip" data-halflife="180">180j · Long-terme</button>
+      </div>
+    </div>
+
+    <div class="settings-section-title">Confidentialité &amp; droits</div>
+    <div class="settings-list">
+      <a href="/privacy" target="_blank" rel="noopener" class="settings-row">
+        <span class="row-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+        </span>
+        <span class="row-text">
+          <span class="row-label">Politique de confidentialité</span>
+          <span class="row-sub">Ce qu'on collecte, pourquoi, et tes droits</span>
+        </span>
+        <span class="row-chevron" aria-hidden="true">↗</span>
+      </a>
+      <button id="dataRightsBtn" type="button" class="settings-row">
+        <span class="row-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 1 0 18 0 9 9 0 1 0-18 0z"/><path d="M12 8v4M12 16h.01"/>
+          </svg>
+        </span>
+        <span class="row-text">
+          <span class="row-label">Mes données et droits</span>
+          <span class="row-sub">Catégories collectées, durée, contact</span>
+        </span>
+        <span class="row-chevron" aria-hidden="true">›</span>
+      </button>
+      <button id="algoOptOutBtn" type="button" class="settings-row" aria-pressed="false">
+        <span class="row-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+          </svg>
+        </span>
+        <span class="row-text">
+          <span class="row-label">Ajustements automatiques</span>
+          <span class="row-sub" id="algoOptOutSub">Activés — l'app adapte tes séances à ton ressenti</span>
+        </span>
+        <span class="row-chevron" aria-hidden="true" id="algoOptOutToggle">●</span>
+      </button>
+      <a href="mailto:joly.jonathan@protonmail.com" class="settings-row">
+        <span class="row-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>
+          </svg>
+        </span>
+        <span class="row-text">
+          <span class="row-label">Contact RGPD</span>
+          <span class="row-sub">joly.jonathan@protonmail.com</span>
+        </span>
+        <span class="row-chevron" aria-hidden="true">↗</span>
+      </a>
+    </div>
+
+    <div class="settings-section-title">Session</div>
+    <div class="settings-list">
+      <button id="logoutBtn" type="button" class="settings-row">
+        <span class="row-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
+          </svg>
+        </span>
+        <span class="row-text">
+          <span class="row-label">Se déconnecter</span>
+          <span class="row-sub">Termine la session sur cet appareil</span>
+        </span>
+      </button>
+    </div>
+
+    <div class="settings-section-title danger">Zone dangereuse</div>
+    <div class="settings-list danger-zone">
+      <button id="resetOnbBtn" type="button" class="settings-row danger">
+        <span class="row-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/>
+          </svg>
+        </span>
+        <span class="row-text">
+          <span class="row-label">Recommencer le questionnaire</span>
+          <span class="row-sub">Efface ton profil d'entraînement actuel</span>
+        </span>
+        <span class="row-chevron" aria-hidden="true">›</span>
+      </button>
+      <button id="deleteAcctBtn" type="button" class="settings-row danger">
+        <span class="row-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            <path d="M10 11v6M14 11v6"/>
+          </svg>
+        </span>
+        <span class="row-text">
+          <span class="row-label">Supprimer mon compte</span>
+          <span class="row-sub">Définitif. Tout l'historique disparaît.</span>
+        </span>
+        <span class="row-chevron" aria-hidden="true">›</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- DASHBOARD / HOME -->
+  <section id="viewHome" class="hide">
+    <!-- Hero ring (Atmos signature) — anneau de progression XP avec niveau
+         au centre, mascot en pastille flottante. Le SVG est animé en JS via
+         stroke-dashoffset. Layout responsive : ring centré sur petit écran,
+         mascot en haut à droite. -->
+    <div class="hero hero-ring">
+      <svg class="hero-ring-svg" viewBox="0 0 200 200" aria-hidden="true" focusable="false">
+        <!-- track de fond -->
+        <circle class="hero-ring-track" cx="100" cy="100" r="86" fill="none"
+                stroke-width="14"></circle>
+        <!-- progress ring : circumference 2π·86 ≈ 540.35. dashoffset
+             contrôle le remplissage. Démarre à -90° (12h) via rotation. -->
+        <circle id="heroRingProgress" class="hero-ring-progress"
+                cx="100" cy="100" r="86" fill="none" stroke-width="14"
+                stroke-linecap="round"
+                stroke-dasharray="540.35"
+                stroke-dashoffset="540.35"
+                transform="rotate(-90 100 100)"></circle>
+      </svg>
+      <div class="hero-ring-center">
+        <div class="hero-title">Niveau</div>
+        <div class="hero-level" id="heroLevel">1</div>
+        <div class="hero-level-name" id="heroLevelName">Débutant</div>
+      </div>
+      <div class="hero-ring-mascot" id="mascotBox" aria-hidden="true"></div>
+      <div class="hero-ring-bottom">
+        <span id="heroXpText">0 / 200 XP</span>
+        <span id="heroNextText">→ Niv. 2</span>
+      </div>
+    </div>
+
+    <!-- Quick stats row -->
+    <div class="qstats">
+      <!-- Tile « Cible roulante » : remplace le streak day-strict.
+           Affiche X/Y séances sur la fenêtre glissante (14 jours par
+           défaut). Code couleur : vert (atteint), normal (sur le rythme),
+           rouge (en retard). Voir computeRollingTarget() dans app.js. -->
+      <div class="qstat" id="qPaceTile" title="Séances réalisées sur la fenêtre glissante de 14 jours">
+        <div class="qstat-icon" id="qPaceIcon">🎯</div>
+        <div class="qstat-val" id="qPace">0/0</div>
+        <div class="qstat-lbl" id="qPaceLbl">Cible 14j</div>
+      </div>
+      <div class="qstat">
+        <div class="qstat-icon">💪</div>
+        <div class="qstat-val" id="qSessions">0</div>
+        <div class="qstat-lbl">Séances</div>
+      </div>
+      <div class="qstat">
+        <div class="qstat-icon">⚡</div>
+        <div class="qstat-val" id="qForme">—</div>
+        <div class="qstat-lbl">Forme</div>
+      </div>
+      <div class="qstat">
+        <div class="qstat-icon">🏆</div>
+        <div class="qstat-val" id="qPRs">0</div>
+        <div class="qstat-lbl">Records</div>
+      </div>
+    </div>
+
+    <!-- Achievements -->
+    <div class="card">
+      <h2>🎖️ Badges</h2>
+      <div class="badges" id="badgesRow"></div>
+    </div>
+
+    <!-- Soreness check (auto-shown if user trained yesterday) -->
+    <div class="card hide" id="sorenessCard">
+      <h2>🩹 Comment tu te sens ?</h2>
+      <p class="mut" style="margin:-4px 0 10px;font-size:12px">
+        Coche les zones douloureuses ou très courbatues : on évitera les exos qui les sollicitent aujourd'hui.
+      </p>
+      <div id="sorenessChips" class="chip-row"></div>
+      <div class="row mt10">
+        <button id="sorenessApply" class="magenta flex1">Appliquer et régénérer</button>
+        <button id="sorenessSkip" class="sec">Ça va</button>
+      </div>
+    </div>
+
+    <!-- Next session -->
+    <div class="card">
+      <h2>📅 Prochaine séance</h2>
+      <div class="mode-toggle" id="modeToggle">
+        <button data-mode="straight" class="on">Séries groupées</button>
+        <button data-mode="circuit">Circuit</button>
+      </div>
+      <p class="mut" id="modeDesc" style="font-size:11px;margin:-4px 0 10px;text-align:center">
+        Toutes les séries d'un exo avant de passer au suivant.
+      </p>
+      <div id="nextSessionBox"><p class="mut">Pas encore de séance générée.</p></div>
+
+      <!-- Today-context controls : durée + matériel + énergie. Overrides
+           one-shot du profil, persistés en localStorage avec date-stamp
+           (reset auto à minuit). Toute modification régénère la séance. -->
+      <div class="today-ctx" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <span class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.5px">Aujourd'hui</span>
+          <button type="button" id="todayResetBtn" class="lnk"
+                  style="font-size:11px;background:none;border:none;color:var(--mut);cursor:pointer;text-decoration:underline">
+            Reset
+          </button>
+        </div>
+
+        <div style="margin-bottom:8px">
+          <span class="mut" style="font-size:11px;display:block;margin-bottom:4px">⏱️ Temps dispo</span>
+          <div class="gear-today" id="todayDuration">
+            <button type="button" class="chip" data-duration="auto">Auto</button>
+            <button type="button" class="chip" data-duration="10">10 min</button>
+            <button type="button" class="chip" data-duration="20">20 min</button>
+            <button type="button" class="chip" data-duration="45">45 min</button>
+            <button type="button" class="chip" data-duration="75">75 min</button>
+          </div>
+        </div>
+
+        <div style="margin-bottom:8px">
+          <span class="mut" style="font-size:11px;display:block;margin-bottom:4px">📍 Lieu / matériel</span>
+          <div class="gear-today" id="gearToday">
+            <button type="button" class="chip on" data-gear="default">🏋️ Comme d'hab</button>
+            <button type="button" class="chip" data-gear="home">🏠 Maison</button>
+            <button type="button" class="chip" data-gear="travel">🏖 Voyage (PdC)</button>
+            <button type="button" class="chip" data-gear="light">💡 Léger seulement</button>
+          </div>
+        </div>
+
+        <div>
+          <span class="mut" style="font-size:11px;display:block;margin-bottom:4px">⚡ Énergie</span>
+          <div class="gear-today" id="todayEnergy">
+            <button type="button" class="chip" data-energy="low">😴 HS</button>
+            <button type="button" class="chip" data-energy="mid">🙂 OK</button>
+            <button type="button" class="chip" data-energy="high">🔥 En feu</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="row mt10">
+        <button id="startBtn" class="magenta flex1">▶ Démarrer</button>
+        <button id="regenBtn" class="sec">↻ Régénérer</button>
+      </div>
+      <button id="snackBtn" type="button" class="sec w-full" style="margin-top:8px">
+        🥪 Séance express (5-15 min)
+      </button>
+      <div class="row mt8">
+        <button id="plateCalcBtn" type="button" class="sec flex1">⚙️ Calculer disques</button>
+        <button id="logExternalBtn" type="button" class="sec flex1">📝 Activité hors app</button>
+      </div>
+    </div>
+
+    <!-- Weekly volume per muscle group — serious-coach view. -->
+    <div class="card">
+      <h2>🎯 Volume cette semaine</h2>
+      <p class="mut" style="margin:-4px 0 10px;font-size:12px">
+        Séries productives par groupe sur 7 jours (cible hypertrophie : 10-20).
+      </p>
+      <div id="volumeList"><p class="mut">Pas encore de données.</p></div>
+    </div>
+
+    <!-- Calendar heatmap (last ~16 weeks) -->
+    <div class="card">
+      <h2>📆 Régularité</h2>
+      <p class="mut" style="margin:-4px 0 10px;font-size:12px">
+        Une case par jour, 16 dernières semaines. L'intensité = durée de la séance.
+      </p>
+      <div id="calHeatmap"><p class="mut">Pas encore de données.</p></div>
+    </div>
+
+    <!-- Live stats sparklines -->
+    <div class="card">
+      <h2>📊 Ta progression</h2>
+      <div id="miniCharts"><p class="mut">Pas encore de données. Fais quelques séances.</p></div>
+    </div>
+
+    <!-- Charge & récupération (Banister fitness-fatigue model)
+         Affiche CTL/ATL/TSB courants, mini-graph 6 sem, recommandation
+         et composite readiness incluant les données physio (HRV, sommeil,
+         FC repos) si fournies par l'utilisateur. -->
+    <div class="card hide" id="banisterCard">
+      <h2 style="margin-bottom:6px">⚡ Charge &amp; récupération</h2>
+      <p class="mut" style="font-size:12px;margin:0 0 10px;line-height:1.5">
+        Modèle Banister : fitness (CTL, base 42j) vs fatigue (ATL, base 7j).
+        TSB = différence — indique si tu es frais ou en surcharge.
+      </p>
+      <div id="banisterBody"></div>
+    </div>
+
+    <!-- Programmation niveau 2 (Israetel + Issurin) — vivant uniquement
+         si l'utilisateur a un peu d'historique. La logique est dans
+         renderProgrammingCard() qui détecte automatiquement. -->
+    <div class="card hide" id="programmingCard">
+      <h2 style="margin-bottom:6px">🧬 Programmation</h2>
+      <p class="mut" style="font-size:12px;margin:0 0 10px;line-height:1.5">
+        Volume hebdo, équilibre push/pull/squat/hinge, type de réponse, et bloc en cours.
+      </p>
+      <div id="programmingBody"></div>
+    </div>
+
+    <!-- Adjustments -->
+    <div class="card" id="adjustCard">
+      <h2>🔧 Ajustements récents</h2>
+      <p class="mut" style="font-size:12px;margin:-2px 0 10px;line-height:1.5">
+        Ces ajustements sont calculés automatiquement par l'app à partir de ton ressenti et
+        de ton historique (RGPD art. 22). Ce sont des recommandations, jamais imposées —
+        tu peux les ignorer ou les régénérer. Pour les désactiver, va dans
+        <em>Profil → Confidentialité &amp; droits → Ajustements automatiques</em>.
+      </p>
+      <div id="adjustList"><p class="mut">Aucun ajustement encore. Fais une première séance.</p></div>
+    </div>
+
+    <!-- Guide -->
+    <div class="card">
+      <h2>📚 Guide des exercices</h2>
+      <p class="mut">Technique détaillée, points-clés et tes records pour chaque exo.</p>
+      <button id="guideBtn" class="sec w-full">Ouvrir le guide</button>
+    </div>
+  </section>
+
+  <!-- EXERCISE GUIDE (list) -->
+  <section id="viewGuide" class="hide">
+    <button id="guideBackBtn" class="back-btn">← Retour</button>
+    <div class="card">
+      <h2>📚 Guide des exercices</h2>
+      <p class="mut">Clique sur un exercice pour voir la technique et ta progression perso.</p>
+    </div>
+    <div id="guideBody"></div>
+  </section>
+
+  <!-- EXERCISE DETAIL -->
+  <section id="viewExerciseDetail" class="hide">
+    <button id="exoBackBtn" class="back-btn">← Retour</button>
+    <div id="exoDetailBody"></div>
+  </section>
+
+  <!-- SESSION -->
+  <section id="viewSession" class="hide">
+    <div class="card">
+      <h2 id="sessTitle">Séance</h2>
+      <p class="mut" id="sessMeta"></p>
+      <div class="bar mt8"><i id="sessBar" style="width:0%"></i></div>
+      <div class="row mt8">
+        <button id="sessPauseBtn" type="button" class="sec flex1">⏸ Mettre en pause</button>
+      </div>
+    </div>
+    <div id="sessBody"></div>
+    <div class="card hide" id="sessEndBox">
+      <h2 style="text-align:center">🎯 Séance terminée</h2>
+      <div id="cooldownBox"></div>
+      <button id="sessToQuestion" class="magenta w-full">Répondre au bilan</button>
+    </div>
+  </section>
+
+  <!-- TIMER (effort / reaction / rest — reused) -->
+  <section id="viewTimer" class="hide">
+    <div class="timer-hero" id="timerCard">
+      <p class="mut" id="timerLabel">Repos</p>
+      <div class="huge" id="timerVal">60</div>
+      <p class="mut" id="timerHint">Quand l'alarme sonne, appuie vite sur STOP.</p>
+      <button id="timerStop" class="ko w-full" style="padding:18px;font-size:18px">STOP</button>
+      <button id="timerSkip" class="sec w-full mt8">Passer</button>
+    </div>
+  </section>
+
+  <!-- TAP TEST -->
+  <section id="viewTap" class="hide">
+    <div class="card center">
+      <h2>⚡ Mini-test fatigue</h2>
+      <p class="mut">Tape <b>3 fois</b> le plus vite possible sur la pastille quand elle devient orange.</p>
+      <button id="tapZone" type="button" class="tap-zone" aria-describedby="tapStatus">Prêt…</button>
+      <p class="mut" id="tapStatus">Attends le signal</p>
+      <button id="tapSkip" class="sec w-full mt8">Passer</button>
+    </div>
+  </section>
+
+  <!-- END QUESTIONNAIRE -->
+  <section id="viewQuestion" class="hide">
+    <div class="card">
+      <h2>📝 Bilan de séance</h2>
+      <p class="mut">Rapide, c'est ce qui nourrit l'adaptation automatique.</p>
+    </div>
+    <div class="card">
+      <label for="qRpe">Difficulté ressentie (RPE 1–10)</label>
+      <input type="range" id="qRpe" min="1" max="10" step="1" value="6">
+      <div class="tick-row" aria-hidden="true">
+        <span>1</span><span>3</span><span>5</span><span>7</span><span>10</span>
+      </div>
+      <div class="center big" id="qRpeVal">6</div>
+    </div>
+    <div class="card">
+      <label>Douleurs / zones gênées</label>
+      <div id="qPain">
+        <button type="button" class="chip" data-pain="epaule">Épaule</button>
+        <button type="button" class="chip" data-pain="dos">Dos</button>
+        <button type="button" class="chip" data-pain="genou">Genou</button>
+        <button type="button" class="chip" data-pain="coude">Coude</button>
+        <button type="button" class="chip" data-pain="poignet">Poignet</button>
+        <button type="button" class="chip" data-pain="hanche">Hanche</button>
+        <button type="button" class="chip" data-pain="cheville">Cheville</button>
+      </div>
+    </div>
+    <div class="card">
+      <label for="qEnergy">Énergie / sommeil (1–5)</label>
+      <input type="range" id="qEnergy" min="1" max="5" step="1" value="3">
+      <div class="tick-row" aria-hidden="true">
+        <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span>
+      </div>
+      <div class="center big" id="qEnergyVal">3</div>
+    </div>
+    <div class="card">
+      <label for="qMood">Humeur / motivation (1–5)</label>
+      <input type="range" id="qMood" min="1" max="5" step="1" value="3">
+      <div class="tick-row" aria-hidden="true">
+        <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span>
+      </div>
+      <div class="center big" id="qMoodVal">3</div>
+    </div>
+    <div class="card">
+      <label for="qNote">Note libre (optionnel)</label>
+      <textarea id="qNote" placeholder="Ex: mal à l'épaule droite en développé couché"></textarea>
+    </div>
+    <button id="qSubmit" class="magenta w-full">Valider et adapter la prochaine séance</button>
+  </section>
+
+  <!-- HISTORY -->
+  <section id="viewHistory" class="hide">
+    <div class="card">
+      <h2>📅 7 derniers jours</h2>
+      <div id="weekSummary"><p class="mut">Pas encore de données.</p></div>
+    </div>
+    <div class="card">
+      <h2>📆 30 derniers jours</h2>
+      <div id="monthSummary"><p class="mut">Pas encore de données.</p></div>
+    </div>
+    <div class="card">
+      <h2>📊 Progression détaillée</h2>
+      <div id="progressCharts"><p class="mut">Pas encore de données.</p></div>
+    </div>
+    <div class="card">
+      <h2>📜 Historique des séances</h2>
+      <div id="histBody"><p class="mut">Aucune séance enregistrée.</p></div>
+    </div>
+  </section>
+</main>
+
+<!-- SWAP MODAL -->
+<div id="swapModal" class="hide">
+  <div class="modal-backdrop" id="swapBackdrop">
+    <div class="modal" id="swapModalBox">
+      <h2>🔄 Remplacer l'exercice</h2>
+      <p class="mut" id="swapModalSub"></p>
+      <div id="swapModalList" class="mt10"></div>
+      <button id="swapCancel" class="sec w-full mt10">Annuler</button>
+    </div>
+  </div>
+</div>
+
+<nav class="bottom" aria-label="Navigation principale">
+  <!-- Animated indicator pill that slides under the active tab. Position
+       is computed in JS (positionNavPill) so we don't have to hardcode 4
+       offsets. Lives as the first child so it sits below the buttons. -->
+  <span class="nav-pill" aria-hidden="true"></span>
+  <button data-tab="home"><span aria-hidden="true">🏠</span> Accueil</button>
+  <button data-tab="session"><span aria-hidden="true">💪</span> Séance</button>
+  <!-- FAB column — the middle 5th cell hosts the floating Démarrer
+       button. Visually overflows the nav upward so it acts like Strava's
+       record button. -->
+  <div class="fab-cell">
+    <button id="fabStart" type="button" class="fab" aria-label="Démarrer une séance">
+      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">
+        <path d="M8 5v14l11-7z" fill="currentColor"/>
+      </svg>
+    </button>
+  </div>
+  <button data-tab="history"><span aria-hidden="true">📈</span> Historique</button>
+  <button data-tab="onboarding"><span aria-hidden="true">⚙️</span> Profil</button>
+</nav>
+
+<script src="/static/qrcode.js"></script>
+<script src="/static/rehab.js"></script>
+<script src="/static/snacks.js"></script>
+<script src="/static/programming.js"></script>
+<script src="/static/bayesian.js"></script>
+<script src="/static/banister.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

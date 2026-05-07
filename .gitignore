@@ -1,0 +1,53 @@
+# =============================================================
+# Coach Adaptatif — .gitignore
+# =============================================================
+
+# --- Données utilisateur (ne JAMAIS committer) ---
+/data/
+*.bak
+*.json.bak
+
+# --- Secrets & env ---
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# --- Binaires Go ---
+/coach
+/coach-app
+/coach.exe
+/coach-app.exe
+coach-go-tmp-umask
+*.test
+*.out
+
+# --- Build artefacts ---
+/dist/
+/build/
+*.tar.gz
+
+# --- Logs ---
+*.log
+
+# --- Couverture / profilage ---
+coverage.out
+coverage.html
+*.prof
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Divers ---
+node_modules/

@@ -1,0 +1,84 @@
+# =============================================================
+# Coach Adaptatif — docker-compose
+# =============================================================
+# Usage :
+#   1. cp .env.example .env
+#   2. Éditer .env (au minimum COACH_TOKEN_KEY)
+#   3. docker compose up -d
+#
+# Premier lancement : ajoute aussi COACH_ADMIN_EMAIL et COACH_ADMIN_PASSWORD
+# dans .env. Les retirer après que l'admin soit créé (sinon le mot de passe
+# est réécrit à chaque restart).
+# =============================================================
+
+services:
+  coach-app:
+    build: .
+    image: coach-app:latest
+    container_name: coach-app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"   # bind localhost — mettre derrière nginx/Caddy pour TLS
+    volumes:
+      - coach_data:/data
+    environment:
+      # Variables critiques — toutes définies dans .env
+      COACH_LISTEN:               0.0.0.0:8080
+      COACH_DATA:                 /data
+      COACH_PUBLIC:               /app/public
+      COACH_TRUST_PROXY:          ${COACH_TRUST_PROXY:-1}    # 1 si derrière reverse proxy
+      COACH_ALLOW_REGISTRATION:   ${COACH_ALLOW_REGISTRATION:-0}
+      COACH_2FA_REQUIRED:         ${COACH_2FA_REQUIRED:-1}
+      COACH_TOKEN_KEY:            ${COACH_TOKEN_KEY:?missing in .env, run: openssl rand -hex 32}
+      COACH_ADMIN_EMAIL:          ${COACH_ADMIN_EMAIL:-}
+      COACH_ADMIN_PASSWORD:       ${COACH_ADMIN_PASSWORD:-}
+      # Intégration Strava — vides = bouton "Se connecter" désactivé.
+      # Voir INTEGRATIONS.md pour le walkthrough complet (créer l'app,
+      # set les vars, souscrire le webhook).
+      STRAVA_CLIENT_ID:           ${STRAVA_CLIENT_ID:-}
+      STRAVA_CLIENT_SECRET:       ${STRAVA_CLIENT_SECRET:-}
+      STRAVA_VERIFY_TOKEN:        ${STRAVA_VERIFY_TOKEN:-}
+      STRAVA_WEBHOOK_URL:         ${STRAVA_WEBHOOK_URL:-}
+      STRAVA_REDIRECT_URI:        ${STRAVA_REDIRECT_URI:-}
+    healthcheck:
+      # Le binaire lui-même implémente --healthcheck : hit interne sur
+      # /privacy via 127.0.0.1, exit 0/1. Pas besoin de curl/wget dans
+      # l'image distroless. La directive HEALTHCHECK du Dockerfile fait
+      # déjà le job, on duplique ici pour overriding éventuel.
+      test: ["CMD", "/app/coach-app", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    # Sécurité runtime
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Limites de ressources (ajuster selon la charge)
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+        reservations:
+          memory: 64M
+    # Logs : driver json-file avec rotation pour éviter de saturer le disque
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  coach_data:
+    # Volume nommé géré par Docker. Pour un bind mount sur le host, remplacer par :
+    #   coach_data:
+    #     driver: local
+    #     driver_opts:
+    #       type: none
+    #       o: bind
+    #       device: /var/lib/coach-app/data

@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="fr" id="privacyRoot">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="theme-color" content="#0E1428" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F5F6FA" media="(prefers-color-scheme: light)">
+<meta name="robots" content="noindex,nofollow">
+<title>Politique de confidentialité · Coach Adaptatif</title>
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
+<style>
+  :root {
+    --bg:#0E1428;
+    --bg2:#161D3A;
+    --fg:#E8EBF7;
+    --mut:#9AA3C7;
+    --line:#2B335A;
+    --accent:#FF5C7C;
+    --accent-dark:#D43A5C;
+    --link:#7BA1FF;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg:#F5F6FA;
+      --bg2:#FFFFFF;
+      --fg:#1A1F38;
+      --mut:#5C6385;
+      --line:#D5D9E8;
+      --link:#3E5BB8;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 24px 16px 80px;
+    -webkit-font-smoothing: antialiased;
+  }
+  main {
+    max-width: 760px;
+    margin: 0 auto;
+    background: var(--bg2);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 28px;
+  }
+  @media (max-width: 600px) {
+    main { padding: 20px 18px; border-radius: 12px; }
+    body { padding: 12px 8px 60px; }
+  }
+  h1 {
+    font-size: 26px;
+    margin: 0 0 6px;
+    line-height: 1.25;
+  }
+  h2 {
+    font-size: 18px;
+    margin: 28px 0 8px;
+    color: var(--fg);
+    border-top: 1px solid var(--line);
+    padding-top: 22px;
+  }
+  h2:first-of-type { border-top: 0; padding-top: 0; }
+  h3 {
+    font-size: 15px;
+    margin: 18px 0 6px;
+    color: var(--fg);
+  }
+  p, ul, ol { margin: 8px 0; }
+  ul, ol { padding-left: 22px; }
+  li { margin: 4px 0; }
+  a {
+    color: var(--link);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  a:hover { color: var(--accent); }
+  code {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 0.9em;
+  }
+  .meta {
+    color: var(--mut);
+    font-size: 13px;
+    margin: 4px 0 16px;
+  }
+  .lang-bar {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-bottom: 14px;
+  }
+  .lang-bar button {
+    background: transparent;
+    color: var(--mut);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .lang-bar button[aria-pressed="true"] {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .back-row {
+    max-width: 760px;
+    margin: 0 auto 14px;
+  }
+  .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--mut);
+    text-decoration: none;
+    font-size: 14px;
+  }
+  .back-link:hover { color: var(--link); }
+  table.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0 12px;
+    font-size: 14px;
+  }
+  table.data-table th, table.data-table td {
+    border: 1px solid var(--line);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  table.data-table th {
+    background: var(--bg);
+    font-weight: 600;
+  }
+  .callout {
+    background: var(--bg);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin: 12px 0;
+    font-size: 14px;
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <div class="back-row">
+    <a href="/" class="back-link" id="backLink">← <span data-i18n="back">Retour à l'application</span></a>
+  </div>
+  <main>
+    <div class="lang-bar" role="group" aria-label="Language">
+      <button type="button" data-lang="fr" aria-pressed="true">Français</button>
+      <button type="button" data-lang="en" aria-pressed="false">English</button>
+    </div>
+
+    <!-- ===================== FRANÇAIS ===================== -->
+    <article id="contentFr" lang="fr">
+      <h1>Politique de confidentialité</h1>
+      <p class="meta">Coach Adaptatif · Version 1.0 · Dernière mise à jour : 27 avril 2026</p>
+
+      <div class="callout">
+        <strong>En une phrase.</strong> Coach Adaptatif est une application personnelle d'entraînement
+        qui stocke localement, sur un serveur géré par le responsable indiqué ci-dessous, des données
+        sur ton profil, tes séances et ton ressenti. Aucune donnée n'est partagée avec des annonceurs
+        ni revendue. Tu peux à tout moment exporter ou supprimer l'ensemble de ton compte.
+      </div>
+
+      <h2>1. Responsable du traitement</h2>
+      <p>
+        Le responsable du traitement au sens de l'article 4 du RGPD est&nbsp;:
+      </p>
+      <ul>
+        <li><strong>Jonathan Joly</strong>, particulier opérant l'instance</li>
+        <li>Contact pour toute question RGPD ou exercice de tes droits&nbsp;:
+          <a href="mailto:joly.jonathan@protonmail.com">joly.jonathan@protonmail.com</a></li>
+      </ul>
+      <p>
+        Aucun délégué à la protection des données (DPO) n'est désigné&nbsp;: l'application est exploitée
+        par un particulier pour un usage restreint, ce qui ne déclenche pas l'obligation de l'article 37 RGPD.
+      </p>
+
+      <h2>2. Données collectées</h2>
+      <p>L'application traite les catégories suivantes&nbsp;:</p>
+      <table class="data-table">
+        <thead>
+          <tr><th>Catégorie</th><th>Exemples</th><th>Origine</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Identifiants de compte</td>
+            <td>Email, hash bcrypt du mot de passe, secret TOTP, date de création, statut admin</td>
+            <td>Saisis par toi ou par l'administrateur lors de la création du compte</td>
+          </tr>
+          <tr>
+            <td>Données de santé <em>(catégorie particulière, art. 9 RGPD)</em></td>
+            <td>Âge, sexe, poids, taille, niveau d'entraînement, zones douloureuses, allergies/intolérances,
+                courbatures déclarées, RPE (perception de l'effort), énergie/humeur, notes libres</td>
+            <td>Saisies par toi dans le profil et lors de chaque séance</td>
+          </tr>
+          <tr>
+            <td>Données comportementales</td>
+            <td>Historique de séance, exercices, charges, répétitions, séries, ajustements algorithmiques
+                générés, temps de réaction (tap test)</td>
+            <td>Générées au fil de l'utilisation de l'application</td>
+          </tr>
+          <tr>
+            <td>Données techniques</td>
+            <td>Adresse IP (logs d'accès et journal d'audit administrateur), horodatage des sessions,
+                cookies de session et CSRF</td>
+            <td>Collectées automatiquement par le serveur</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>3. Finalités et bases légales</h2>
+      <table class="data-table">
+        <thead><tr><th>Finalité</th><th>Base légale (art. 6 et 9 RGPD)</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Authentification, sécurité du compte, prévention de l'abus</td>
+            <td>Intérêt légitime (art. 6.1.f) et obligation contractuelle implicite (art. 6.1.b)</td>
+          </tr>
+          <tr>
+            <td>Adaptation du programme d'entraînement à ton profil et à ton historique</td>
+            <td>Consentement explicite pour les données de santé (art. 9.2.a) + exécution du service (art. 6.1.b)</td>
+          </tr>
+          <tr>
+            <td>Journal d'audit administrateur (création de comptes, réinitialisations)</td>
+            <td>Intérêt légitime de sécurité et de traçabilité (art. 6.1.f)</td>
+          </tr>
+          <tr>
+            <td>Logs d'accès techniques (rate limiting, diagnostic)</td>
+            <td>Intérêt légitime (art. 6.1.f)</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>4. Décision automatisée (article 22 RGPD)</h2>
+      <p>
+        L'application calcule automatiquement, à partir de tes données (RPE, courbatures, historique,
+        zones douloureuses), des ajustements de programme&nbsp;: réduction de charge (deload), substitution
+        d'exercices, modulation du volume. Ces décisions sont des recommandations, jamais
+        contraignantes&nbsp;: tu peux les ignorer, les modifier, ou les régénérer.
+      </p>
+      <p>
+        Conformément à l'article 22 RGPD, tu disposes du droit de t'opposer à ce traitement automatisé.
+        Une option <em>« Désactiver les ajustements automatiques »</em> est disponible dans la section
+        <strong>Mon compte → Mes données et droits</strong>.
+      </p>
+
+      <h2>5. Durées de conservation</h2>
+      <ul>
+        <li><strong>Compte et profil</strong>&nbsp;: tant que ton compte existe. Suppression définitive
+          par le bouton <em>« Supprimer mon compte »</em>.</li>
+        <li><strong>Historique de séances</strong>&nbsp;: idem. Effacé en même temps que le compte.</li>
+        <li><strong>Sessions actives</strong>&nbsp;: 30 jours maximum, puis expiration automatique.</li>
+        <li><strong>Journal d'audit administrateur</strong>&nbsp;: 12 mois glissants, puis rotation.</li>
+        <li><strong>Logs techniques (accès, rate limiting)</strong>&nbsp;: durée de vie du processus
+          serveur, agrégés sans nominatif au-delà de quelques jours.</li>
+        <li><strong>Comptes inactifs</strong>&nbsp;: au-delà de 24 mois sans connexion, l'administrateur
+          peut purger le compte après notification par email.</li>
+      </ul>
+
+      <h2>6. Destinataires et transferts</h2>
+      <p>
+        Les données restent sur le serveur opéré par le responsable de traitement et ne sont
+        <strong>pas partagées</strong> avec des tiers, à deux exceptions&nbsp;:
+      </p>
+      <ul>
+        <li>
+          <strong>YouTube (Google LLC, États-Unis)</strong>&nbsp;: les vidéos de démonstration des exercices
+          sont intégrées via <code>youtube-nocookie.com</code>. Tant que tu ne lances pas une vidéo,
+          aucun cookie de tracking n'est posé&nbsp;; ton adresse IP et ton user-agent sont néanmoins
+          transmis à Google dès que l'iframe se charge. La base légale est l'intérêt légitime du
+          service&nbsp;; tu peux désactiver ces vidéos dans ton navigateur si tu préfères ne pas
+          déclencher cette communication. Transfert hors UE encadré par les clauses contractuelles
+          types de la Commission européenne (Google).
+        </li>
+        <li>
+          <strong>Hébergeur</strong>&nbsp;: l'instance peut être hébergée chez un fournisseur d'infrastructure
+          (VPS, cloud) localisé en Union européenne. Aucune donnée applicative n'est transmise au-delà
+          des sauvegardes éventuelles que le responsable peut chiffrer côté serveur.
+        </li>
+      </ul>
+
+      <h2>7. Tes droits</h2>
+      <p>Tu disposes des droits suivants, exerçables à tout moment&nbsp;:</p>
+      <ul>
+        <li><strong>Accès</strong> (art. 15)&nbsp;: bouton <em>« Exporter mes données »</em> dans Mon compte
+          (téléchargement JSON complet).</li>
+        <li><strong>Rectification</strong> (art. 16)&nbsp;: tu peux modifier ton profil à tout moment.</li>
+        <li><strong>Effacement</strong> (art. 17)&nbsp;: bouton <em>« Supprimer mon compte »</em>, qui
+          détruit définitivement le profil, l'historique, le secret 2FA et invalide toutes les
+          sessions.</li>
+        <li><strong>Portabilité</strong> (art. 20)&nbsp;: l'export ci-dessus est au format JSON ouvert.</li>
+        <li><strong>Opposition</strong> (art. 21) et <strong>limitation</strong> (art. 18)&nbsp;: par
+          email à l'adresse de contact.</li>
+        <li><strong>Retrait du consentement</strong> (art. 7.3)&nbsp;: à tout moment, sans effet sur la
+          licéité des traitements antérieurs. Le retrait du consentement aux données de santé empêche
+          l'utilisation de l'app, qui repose sur ces données&nbsp;; le compte peut alors être supprimé.</li>
+        <li><strong>Réclamation</strong>&nbsp;: si tu estimes que tes droits ne sont pas respectés, tu
+          peux saisir la <a href="https://www.cnil.fr/fr/plaintes" rel="noopener noreferrer" target="_blank">CNIL</a>.</li>
+      </ul>
+
+      <h2>8. Cookies</h2>
+      <p>
+        L'application utilise uniquement <strong>deux cookies strictement nécessaires</strong>&nbsp;:
+        un cookie de session opaque (authentification) et un cookie CSRF (protection contre les
+        requêtes inter-sites). Aucun cookie de mesure, de publicité ou de réseau social n'est posé.
+        Conformément à l'article 82 de la loi Informatique et Libertés, ces cookies ne nécessitent pas
+        de bandeau de consentement.
+      </p>
+
+      <h2>9. Sécurité</h2>
+      <p>
+        Mesures techniques mises en place&nbsp;: HTTPS forcé (HSTS), mots de passe stockés via
+        bcrypt (cost 12), 2FA TOTP obligatoire par défaut, sessions <code>HttpOnly</code> +
+        <code>SameSite=Strict</code> + <code>Secure</code>, double-submit CSRF, rate limiting par IP,
+        permissions strictes sur les fichiers (0700/0600), Content Security Policy stricte,
+        suppression atomique des données utilisateur. Le code est auditable.
+      </p>
+
+      <h2>10. Mineurs</h2>
+      <p>
+        L'application n'est pas destinée aux personnes de moins de 15 ans (seuil français de
+        consentement numérique). Si tu as moins de 15 ans, n'utilise pas cette application sans
+        l'autorisation et la présence d'un titulaire de l'autorité parentale, qui doit
+        contacter le responsable de traitement.
+      </p>
+
+      <h2>11. Modifications</h2>
+      <p>
+        Cette politique peut évoluer. Toute modification substantielle (changement de finalité, de
+        durée, de destinataire) sera notifiée à l'ouverture de l'application avant que tu ne
+        puisses continuer à l'utiliser, et la date de mise à jour ci-dessus sera incrémentée.
+      </p>
+
+      <h2>12. Contact</h2>
+      <p>
+        Pour toute question ou pour exercer un droit&nbsp;:
+        <a href="mailto:joly.jonathan@protonmail.com">joly.jonathan@protonmail.com</a>.
+        Délai de réponse&nbsp;: un mois maximum (art. 12.3 RGPD).
+      </p>
+    </article>
+
+    <!-- ===================== ENGLISH ===================== -->
+    <article id="contentEn" lang="en" hidden>
+      <h1>Privacy Policy</h1>
+      <p class="meta">Coach Adaptatif · Version 1.0 · Last updated: 27 April 2026</p>
+
+      <div class="callout">
+        <strong>In one sentence.</strong> Coach Adaptatif is a personal training app that stores
+        your profile, sessions and self-reported state on a server operated by the controller
+        named below. No data is shared with advertisers or sold. You can export or delete your
+        entire account at any time.
+      </div>
+
+      <h2>1. Data controller</h2>
+      <p>The data controller, as defined in Article 4 GDPR, is:</p>
+      <ul>
+        <li><strong>Jonathan Joly</strong>, individual operating the instance</li>
+        <li>Contact for GDPR matters and exercising your rights:
+          <a href="mailto:joly.jonathan@protonmail.com">joly.jonathan@protonmail.com</a></li>
+      </ul>
+      <p>
+        No Data Protection Officer (DPO) has been appointed: the app is operated by an
+        individual for limited use, which does not trigger the requirement of Article 37 GDPR.
+      </p>
+
+      <h2>2. Data we process</h2>
+      <table class="data-table">
+        <thead><tr><th>Category</th><th>Examples</th><th>Source</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Account identifiers</td>
+            <td>Email, bcrypt password hash, TOTP secret, creation date, admin flag</td>
+            <td>Provided by you or by the administrator at account creation</td>
+          </tr>
+          <tr>
+            <td>Health data <em>(special category, Art. 9 GDPR)</em></td>
+            <td>Age, sex, weight, height, training level, painful body zones, allergies/intolerances,
+                muscle soreness, RPE (perceived exertion), energy/mood, free-text notes</td>
+            <td>Entered by you in the profile and in each workout</td>
+          </tr>
+          <tr>
+            <td>Behavioural data</td>
+            <td>Workout history, exercises, loads, reps, sets, generated algorithmic adjustments,
+                reaction times (tap test)</td>
+            <td>Generated by your usage of the app</td>
+          </tr>
+          <tr>
+            <td>Technical data</td>
+            <td>IP address (access logs, admin audit log), session timestamps, session and CSRF cookies</td>
+            <td>Collected automatically by the server</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>3. Purposes and legal bases</h2>
+      <table class="data-table">
+        <thead><tr><th>Purpose</th><th>Legal basis (Art. 6 and 9 GDPR)</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Authentication, account security, abuse prevention</td>
+            <td>Legitimate interest (Art. 6.1.f) and implicit contractual necessity (Art. 6.1.b)</td>
+          </tr>
+          <tr>
+            <td>Adapting the training programme to your profile and history</td>
+            <td>Explicit consent for health data (Art. 9.2.a) + service performance (Art. 6.1.b)</td>
+          </tr>
+          <tr>
+            <td>Administrator audit log (account creation, password resets)</td>
+            <td>Legitimate interest in security and traceability (Art. 6.1.f)</td>
+          </tr>
+          <tr>
+            <td>Technical access logs (rate limiting, diagnostics)</td>
+            <td>Legitimate interest (Art. 6.1.f)</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>4. Automated decisions (Article 22 GDPR)</h2>
+      <p>
+        The app automatically computes, from your data (RPE, soreness, history, painful zones),
+        programme adjustments: load reduction (deload), exercise substitution, volume modulation.
+        These decisions are recommendations, never binding: you can ignore, edit or regenerate them.
+      </p>
+      <p>
+        Pursuant to Article 22 GDPR you have the right to object to this automated processing.
+        A <em>"Disable automatic adjustments"</em> toggle is available under
+        <strong>My account → My data and rights</strong>.
+      </p>
+
+      <h2>5. Retention periods</h2>
+      <ul>
+        <li><strong>Account and profile</strong>: as long as your account exists. Permanently
+          deleted via the <em>"Delete my account"</em> button.</li>
+        <li><strong>Workout history</strong>: same — deleted with the account.</li>
+        <li><strong>Active sessions</strong>: 30 days maximum, then automatic expiry.</li>
+        <li><strong>Administrator audit log</strong>: rolling 12 months, then rotated.</li>
+        <li><strong>Technical logs (access, rate limiting)</strong>: lifetime of the server process,
+          aggregated without identifiers beyond a few days.</li>
+        <li><strong>Inactive accounts</strong>: after 24 months without login the administrator
+          may purge the account after email notice.</li>
+      </ul>
+
+      <h2>6. Recipients and transfers</h2>
+      <p>
+        Data stays on the server operated by the controller and is <strong>not shared</strong> with
+        third parties, with two exceptions:
+      </p>
+      <ul>
+        <li>
+          <strong>YouTube (Google LLC, USA)</strong>: exercise demo videos are embedded via
+          <code>youtube-nocookie.com</code>. As long as you do not press play no tracking cookies
+          are dropped; your IP address and user-agent are however sent to Google as soon as the
+          iframe loads. Legal basis: legitimate interest of the service. You can disable these
+          videos in your browser if you prefer not to trigger this transfer. Outside-EU transfer
+          covered by the European Commission's Standard Contractual Clauses (Google).
+        </li>
+        <li>
+          <strong>Hosting provider</strong>: the instance may be hosted with an EU-located
+          infrastructure provider (VPS, cloud). No application data is transmitted beyond optional
+          backups, which the controller may encrypt server-side.
+        </li>
+      </ul>
+
+      <h2>7. Your rights</h2>
+      <p>You have the following rights, exercisable at any time:</p>
+      <ul>
+        <li><strong>Access</strong> (Art. 15): <em>"Export my data"</em> button in My account
+          (full JSON download).</li>
+        <li><strong>Rectification</strong> (Art. 16): you can edit your profile any time.</li>
+        <li><strong>Erasure</strong> (Art. 17): <em>"Delete my account"</em> button, which
+          permanently destroys profile, history, the 2FA secret and invalidates all sessions.</li>
+        <li><strong>Portability</strong> (Art. 20): the export above is open-format JSON.</li>
+        <li><strong>Objection</strong> (Art. 21) and <strong>restriction</strong> (Art. 18): by
+          email to the contact address.</li>
+        <li><strong>Withdrawal of consent</strong> (Art. 7.3): at any time, without affecting the
+          lawfulness of prior processing. Withdrawing consent for health data prevents using the
+          app, which depends on this data; the account can then be deleted.</li>
+        <li><strong>Complaint</strong>: if your rights are not respected, you can file with the
+          <a href="https://www.cnil.fr/en/plaintes" rel="noopener noreferrer" target="_blank">French CNIL</a>
+          or your local supervisory authority.</li>
+      </ul>
+
+      <h2>8. Cookies</h2>
+      <p>
+        The app uses only <strong>two strictly necessary cookies</strong>: an opaque session cookie
+        (authentication) and a CSRF cookie (cross-site request protection). No measurement,
+        advertising or social-network cookies are set. Under Article 82 of the French Data
+        Protection Act, these cookies do not require a consent banner.
+      </p>
+
+      <h2>9. Security</h2>
+      <p>
+        Technical measures in place: enforced HTTPS (HSTS), passwords stored with bcrypt (cost 12),
+        TOTP 2FA mandatory by default, <code>HttpOnly</code> + <code>SameSite=Strict</code> +
+        <code>Secure</code> session cookies, double-submit CSRF, per-IP rate limiting, strict file
+        permissions (0700/0600), strict Content Security Policy, atomic deletion of user data. The
+        codebase is auditable.
+      </p>
+
+      <h2>10. Minors</h2>
+      <p>
+        The app is not intended for people under 15 (French digital consent threshold). If you are
+        under 15, do not use this app without authorisation from and presence of a parental
+        authority holder, who must contact the controller.
+      </p>
+
+      <h2>11. Changes</h2>
+      <p>
+        This policy may change. Any substantive change (purpose, retention, recipient) will be
+        notified at app open before you can continue using it, and the update date above will be
+        incremented.
+      </p>
+
+      <h2>12. Contact</h2>
+      <p>
+        For any question or to exercise a right:
+        <a href="mailto:joly.jonathan@protonmail.com">joly.jonathan@protonmail.com</a>.
+        Response time: one month maximum (Art. 12.3 GDPR).
+      </p>
+    </article>
+  </main>
+
+<script src="/static/privacy.js"></script>
+</body>
+</html>

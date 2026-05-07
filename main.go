@@ -1,0 +1,312 @@
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"flag"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+)
+
+// Config globals set from flags/env in main().
+var (
+	dataDir       = "./data"
+	publicDir     = "./public"
+	listenAddr    = "127.0.0.1:8080"
+	trustProxy    = false
+	allowReg      = true
+	twofaRequired = true // default: 2FA mandatory; opt-out via COACH_2FA_REQUIRED=0
+)
+
+func main() {
+	// --healthcheck : sub-mode utilisé par Docker HEALTHCHECK et compose.
+	// Fait un GET HTTP sur /privacy (route publique sans rate limit) et
+	// exit 0 si 200, 1 sinon. Permet d'éviter d'embarquer curl/wget dans
+	// l'image distroless. Doit être le PREMIER flag traité avant toute
+	// autre initialisation pour rester rapide et sans effet de bord.
+	healthcheckFlag := flag.Bool("healthcheck", false,
+		"perform HTTP healthcheck against COACH_LISTEN and exit (used by Docker HEALTHCHECK)")
+	flag.StringVar(&dataDir, "data", getenv("COACH_DATA", "./data"), "data directory (chmod 700)")
+	flag.StringVar(&publicDir, "public", getenv("COACH_PUBLIC", "./public"), "public assets directory")
+	flag.StringVar(&listenAddr, "listen", getenv("COACH_LISTEN", "127.0.0.1:8080"), "listen address")
+	trustProxy = getenv("COACH_TRUST_PROXY", "") == "1"
+	// Public registration is OFF by default — admins create accounts.
+	// Operators can re-open it by setting COACH_ALLOW_REGISTRATION=1.
+	allowReg = getenv("COACH_ALLOW_REGISTRATION", "0") == "1"
+	// 2FA is REQUIRED by default. Operators with a deliberate reason
+	// (closed network, single-user lab, etc.) can disable with
+	// COACH_2FA_REQUIRED=0. When required and a user hasn't enrolled,
+	// every data endpoint returns 403 needsEnroll2FA — the only paths
+	// they can hit are the 2FA setup/verify routes (and /api/me, csrf,
+	// logout, change-password). Server-enforced — the client can't bypass.
+	twofaRequired = getenv("COACH_2FA_REQUIRED", "1") == "1"
+	flag.Parse()
+
+	if *healthcheckFlag {
+		// Mode healthcheck — call l'instance qui tourne et exit.
+		runHealthcheck()
+		// runHealthcheck appelle os.Exit, on n'arrive pas ici en théorie.
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Join(dataDir, "workouts"), 0o700); err != nil {
+		log.Fatalf("data dir: %v", err)
+	}
+	// Best-effort tighten perms on data dir (and its parent if newly created).
+	_ = os.Chmod(dataDir, 0o700)
+
+	loadUsers()
+	ensureBootstrapAdmin()
+	loadSessions()
+	go sessionJanitor()
+	go rateLimitJanitor()
+	startAuditJanitor() // rotation du journal d'audit à 12 mois (RGPD)
+	rebuildStravaAthleteIndex() // map athleteID → uid pour le webhook
+	go stravaJanitor()          // purge des states OAuth pending expirés
+
+	mux := http.NewServeMux()
+
+	// --- API ---
+	// Rate-limited auth endpoints to slow down credential stuffing / signup abuse.
+	mux.HandleFunc("POST /api/register", rateLimit("register", 5, 15*time.Minute, handleRegister))
+	mux.HandleFunc("POST /api/login", rateLimit("login", 8, 15*time.Minute, handleLogin))
+	mux.HandleFunc("POST /api/logout", handleLogout)
+	// /api/me and /api/csrf are called on every page boot, so give them a
+	// generous but finite per-IP budget to cap noise from scripted probes.
+	mux.HandleFunc("GET /api/me", rateLimit("me", 120, 1*time.Minute, handleMe))
+	mux.HandleFunc("GET /api/csrf", rateLimit("csrf", 120, 1*time.Minute, handleCSRF))
+	// Data endpoints are gated by both requireAuth AND require2FA — when 2FA
+	// is mandatory and the user hasn't enrolled, every read/write returns 403
+	// {needsEnroll2FA: true} so the SPA pivots to the enrollment screen.
+	// The 2FA management routes are intentionally NOT behind require2FA so
+	// the user can actually enroll.
+	mux.HandleFunc("GET /api/data", requireAuth(require2FA(handleLoadData)))
+	mux.HandleFunc("PUT /api/data", requireAuth(require2FA(handleSaveData)))
+	mux.HandleFunc("GET /api/export", requireAuth(require2FA(handleExport)))
+	mux.HandleFunc("POST /api/delete-account", requireAuth(require2FA(handleDeleteAccount)))
+	// RGPD endpoints — recording explicit consent for health data (art. 9.2.a)
+	// and the algorithmic-decision opt-out (art. 22). Both are CSRF-protected
+	// via requireAuth's POST guard. They sit BEHIND require2FA — a user must
+	// have completed 2FA enrollment before they can record consent, since
+	// recording consent only matters once the account is fully provisioned.
+	mux.HandleFunc("POST /api/consent", rateLimit("consent", 20, 5*time.Minute, requireAuth(require2FA(handleHealthConsent))))
+	mux.HandleFunc("POST /api/algo-optout", rateLimit("consent", 20, 5*time.Minute, requireAuth(require2FA(handleAlgoOptOut))))
+
+	// Intégrations physio (HRV / sommeil / FC repos via wearable APIs).
+	// Tokens stockés côté serveur (users.json, jamais sérialisés vers le
+	// client). Webhook accepte des push externes (Apple Health Auto Export,
+	// Tasker, scripts custom) — pas d'auth de session, validé par secret
+	// path-level constant-time. Voir physio.go pour les handlers.
+	mux.HandleFunc("GET /api/physio/integrations",
+		requireAuth(require2FA(handlePhysioListIntegrations)))
+	mux.HandleFunc("POST /api/physio/integrations/oura",
+		rateLimit("physio_set", 20, 5*time.Minute, requireAuth(require2FA(handlePhysioSetOura))))
+	mux.HandleFunc("DELETE /api/physio/integrations/oura",
+		rateLimit("physio_set", 20, 5*time.Minute, requireAuth(require2FA(handlePhysioRemoveOura))))
+	mux.HandleFunc("POST /api/physio/integrations/webhook",
+		rateLimit("physio_set", 20, 5*time.Minute, requireAuth(require2FA(handlePhysioRotateWebhook))))
+	mux.HandleFunc("DELETE /api/physio/integrations/webhook",
+		rateLimit("physio_set", 20, 5*time.Minute, requireAuth(require2FA(handlePhysioRevokeWebhook))))
+	mux.HandleFunc("POST /api/physio/sync",
+		rateLimit("physio_sync", 30, 1*time.Hour, requireAuth(require2FA(handlePhysioSync))))
+	// Webhook : sans auth de session — validé par {uid, secret} path. Rate
+	// limit serré (un push externe légitime fait 1-4 calls/jour).
+	mux.HandleFunc("POST /api/physio/webhook/{uid}/{secret}",
+		rateLimit("physio_webhook", 60, 1*time.Hour, handlePhysioWebhook))
+
+	// --- Strava OAuth + webhooks ---
+	// Le user clique "Se connecter avec Strava" depuis le panneau du profil ;
+	// /auth/strava/start redirige vers strava.com qui revient sur /callback.
+	// Une fois connecté, Strava push chaque nouvelle activité vers
+	// /api/strava/webhook (validation par STRAVA_VERIFY_TOKEN). Voir strava.go.
+	mux.HandleFunc("GET /auth/strava/start",
+		rateLimit("strava_oauth", 20, 5*time.Minute, requireAuth(require2FA(handleStravaAuthStart))))
+	mux.HandleFunc("GET /auth/strava/callback",
+		rateLimit("strava_oauth", 20, 5*time.Minute, handleStravaAuthCallback))
+	mux.HandleFunc("/api/strava/webhook",
+		rateLimit("strava_webhook", 600, 1*time.Hour, handleStravaWebhook))
+	mux.HandleFunc("DELETE /api/physio/integrations/strava",
+		rateLimit("physio_set", 20, 5*time.Minute, requireAuth(require2FA(handleStravaDisconnect))))
+	mux.HandleFunc("POST /api/physio/integrations/strava/sync",
+		rateLimit("physio_sync", 30, 1*time.Hour, requireAuth(require2FA(handleStravaSync))))
+	// Endpoint admin one-shot pour enregistrer la subscription webhook auprès
+	// de Strava. À appeler une fois par instance (curl -X POST ...).
+	mux.HandleFunc("POST /api/admin/strava/subscribe",
+		rateLimit("admin_write", 10, 5*time.Minute, requireAdmin(require2FA(handleStravaSubscribe))))
+	// change-password stays accessible without 2FA enrollment so a user with
+	// a weak inherited password can rotate it before completing setup.
+	mux.HandleFunc("POST /api/change-password", rateLimit("change_password", 10, 15*time.Minute, requireAuth(handleChangePassword)))
+	mux.HandleFunc("GET /api/2fa/status", requireAuth(handle2FAStatus))
+	mux.HandleFunc("POST /api/2fa/setup", rateLimit("2fa_setup", 5, 15*time.Minute, requireAuth(handle2FASetup)))
+	mux.HandleFunc("POST /api/2fa/verify", rateLimit("2fa_verify", 10, 15*time.Minute, requireAuth(handle2FAVerify)))
+	mux.HandleFunc("POST /api/2fa/disable", rateLimit("2fa_disable", 5, 15*time.Minute, requireAuth(handle2FADisable)))
+
+	// --- Admin API (requires authenticated admin + CSRF on writes) ---
+	// Admin routes also go behind require2FA — admin without 2FA is a fat
+	// target. requireAdmin already calls requireAuth's prerequisites; we
+	// stack require2FA on top so the user must enroll before admin work.
+	mux.HandleFunc("GET /api/admin/users", requireAdmin(require2FA(handleAdminListUsers)))
+	mux.HandleFunc("POST /api/admin/users", rateLimit("admin_write", 30, 5*time.Minute, requireAdmin(require2FA(handleAdminCreateUser))))
+	mux.HandleFunc("POST /api/admin/users/{id}/password", rateLimit("admin_write", 30, 5*time.Minute, requireAdmin(require2FA(handleAdminResetPassword))))
+	mux.HandleFunc("POST /api/admin/users/{id}/admin", rateLimit("admin_write", 30, 5*time.Minute, requireAdmin(require2FA(handleAdminToggleAdmin))))
+	mux.HandleFunc("POST /api/admin/users/{id}/revoke-sessions", rateLimit("admin_write", 30, 5*time.Minute, requireAdmin(require2FA(handleAdminRevokeSessions))))
+	mux.HandleFunc("DELETE /api/admin/users/{id}", rateLimit("admin_write", 30, 5*time.Minute, requireAdmin(require2FA(handleAdminDeleteUser))))
+	mux.HandleFunc("GET /api/admin/users/{id}/data", requireAdmin(require2FA(handleAdminGetUserData)))
+
+	// --- Static ---
+	staticFS := http.FileServer(http.Dir(publicDir))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", staticFS))
+	mux.HandleFunc("GET /admin", serveAdmin)
+	// /privacy is the GDPR/RGPD privacy policy. Static HTML, public, indexable
+	// only by humans (we set noindex). Served at root scope so it can be
+	// linked from the login screen and from the policy email correspondence.
+	mux.HandleFunc("GET /privacy", servePrivacy)
+	// PWA assets MUST be served at root scope, else the service worker can't
+	// control the whole origin. We handle each explicitly so we can set the
+	// right Cache-Control (sw.js must be near-live or users miss SW updates).
+	mux.HandleFunc("GET /sw.js", servePWAFile("sw.js", "application/javascript", "no-cache"))
+	mux.HandleFunc("GET /manifest.json", servePWAFile("manifest.json", "application/manifest+json", "public, max-age=3600"))
+	mux.HandleFunc("GET /icon.svg", servePWAFile("icon.svg", "image/svg+xml", "public, max-age=86400"))
+	mux.HandleFunc("GET /{$}", serveIndex)
+
+	// Middleware chain: outermost first.
+	handler := chain(mux,
+		recoverPanic,    // catch-all for panics, returns 500 without leaking stack
+		accessLog,       // access logging (sans body/cookies)
+		secureHeaders,   // CSP, HSTS, X-Frame-Options, etc.
+		maxBody(1<<20),  // hard cap: 1 MiB per request
+	)
+
+	srv := &http.Server{
+		Addr:              listenAddr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
+	go func() {
+		log.Printf("coach listening on %s (registration=%v, trustProxy=%v)", listenAddr, allowReg, trustProxy)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %v", err)
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+	<-stop
+	log.Println("shutting down...")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
+	saveSessions()
+	log.Println("bye")
+}
+
+func getenv(k, d string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return d
+}
+
+func serveIndex(w http.ResponseWriter, r *http.Request) {
+	// Authenticated users see their email/admin badge rendered client-side
+	// from /api/me, but the HTML shell can include state. Prevent any
+	// intermediate cache from holding it.
+	w.Header().Set("Cache-Control", "no-store, must-revalidate")
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	http.ServeFile(w, r, filepath.Join(publicDir, "index.html"))
+}
+
+// serveAdmin serves the admin SPA. The page itself is static — access control
+// is enforced server-side on every /api/admin/* call, so even if a non-admin
+// opens this HTML they see nothing (every admin API call returns 401/404).
+// We still mark it no-store + noindex so no cache and no crawler retain it.
+func serveAdmin(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store, must-revalidate")
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	http.ServeFile(w, r, filepath.Join(publicDir, "admin.html"))
+}
+
+// runHealthcheck est appelé en mode --healthcheck. Hit /privacy (route
+// publique, pas de rate limit, retourne 200 stable) sur l'adresse de listen
+// et exit 0/1. Pas de log, pas de stderr — Docker considère le code retour.
+//
+// L'adresse cible : si COACH_LISTEN est `0.0.0.0:8080` (mode container),
+// on hit `127.0.0.1:8080`. Si c'est déjà 127.0.0.1:..., on garde tel quel.
+func runHealthcheck() {
+	target := listenAddr
+	if strings.HasPrefix(target, "0.0.0.0:") {
+		target = "127.0.0.1:" + strings.TrimPrefix(target, "0.0.0.0:")
+	} else if strings.HasPrefix(target, ":") {
+		target = "127.0.0.1" + target
+	}
+	url := "http://" + target + "/privacy"
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+// servePrivacy serves the privacy policy page. Public, no auth required.
+// Mark noindex so the policy is reachable but not crawled into search results
+// (the canonical location is the operator's documentation, not search engines).
+func servePrivacy(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	http.ServeFile(w, r, filepath.Join(publicDir, "privacy.html"))
+}
+
+// servePWAFile returns a handler that serves a file from publicDir with a
+// fixed Content-Type and Cache-Control. We ServeFile so conditional requests
+// (If-Modified-Since / ETag) still short-circuit correctly — meaning even the
+// no-cache sw.js can 304 and save bytes while remaining freshness-checked.
+func servePWAFile(name, ctype, cacheCtl string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", ctype)
+		w.Header().Set("Cache-Control", cacheCtl)
+		http.ServeFile(w, r, filepath.Join(publicDir, name))
+	}
+}
+
+func randHex(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand failing is catastrophic; refuse to return a predictable value.
+		panic("crypto/rand failed: " + err.Error())
+	}
+	return hex.EncodeToString(b)
+}
+
+// clientIP returns the best-effort client IP, honoring X-Forwarded-For ONLY if we
+// explicitly trust the proxy (COACH_TRUST_PROXY=1). Without that, any client could
+// spoof their IP and bypass rate limiting.
+func clientIP(r *http.Request) string {
+	if trustProxy {
+		if x := r.Header.Get("X-Forwarded-For"); x != "" {
+			parts := strings.Split(x, ",")
+			return strings.TrimSpace(parts[0])
+		}
+	}
+	host := r.RemoteAddr
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		host = host[:i]
+	}
+	return strings.Trim(host, "[]")
+}

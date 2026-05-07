@@ -1,0 +1,45 @@
+# Pas dans l'image : artifacts de build, doc, tests, secrets, données.
+.git
+.gitignore
+.github
+*.md
+!README.md
+
+# Tests Go : exclus du build de production (le binaire est ce qui compte).
+*_test.go
+testhelpers_test.go
+
+# Données utilisateur, surtout pas dans l'image.
+data/
+*.bak
+*.json.bak
+
+# Fichiers de dev, IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Secrets et env
+.env
+.env.local
+*.key
+*.pem
+
+# Artifacts
+coach-app
+coach-app-*
+*.tar.gz
+dist/
+
+# Docker lui-même
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Frontend tests (servis statiquement seulement si présents en runtime)
+public/tests/
+
+# OS
+.DS_Store
+Thumbs.db
