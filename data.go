@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -129,6 +130,30 @@ func handleSaveData(w http.ResponseWriter, r *http.Request) {
 	for k := range payload.Data {
 		if !allowed[k] {
 			delete(payload.Data, k)
+		}
+	}
+
+	// Audit M-06 : validation de cardinalité sur les sous-arrays de `body`
+	// (hooper, lifestyle, pvt, intentions, weights, measurements, physio).
+	// Le content shape reste opaque côté serveur, mais on cap chaque array
+	// pour éviter un client malveillant qui ferait gonfler le data file
+	// jusqu'à dégrader les perfs (parse JSON de plusieurs MiB à chaque
+	// /api/data). Limite suffisamment large pour un usage normal (~5 ans
+	// de check-ins quotidiens), assez serrée pour bloquer l'abus.
+	if rawBody, ok := payload.Data["body"]; ok {
+		if body, ok := rawBody.(map[string]any); ok {
+			const maxEntries = 2000
+			subArrays := []string{
+				"hooper", "lifestyle", "pvt", "intentions",
+				"weights", "measurements", "physio",
+			}
+			for _, key := range subArrays {
+				if arr, ok := body[key].([]any); ok && len(arr) > maxEntries {
+					writeErr(w, http.StatusRequestEntityTooLarge,
+						"trop d'entrées dans body."+key+" (max "+strconv.Itoa(maxEntries)+")")
+					return
+				}
+			}
 		}
 	}
 

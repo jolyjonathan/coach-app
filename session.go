@@ -27,10 +27,27 @@ var (
 	sessionsMu sync.RWMutex
 
 	sessionTTL          = 30 * 24 * time.Hour
-	sessionCookieName   = "coach_sid"
-	csrfCookieName      = "coach_csrf"
-	csrfHeaderName      = "X-CSRF-Token"
+	// Audit M-03 : sur HTTPS, on émet __Host-coach_sid / __Host-coach_csrf
+	// (prefixe qui force Secure + Path=/ + pas de Domain → durcissement
+	// supplémentaire contre l'injection de cookie depuis un sous-domaine).
+	// Sur HTTP (dev local), on garde les noms sans prefix car __Host- exige Secure.
+	// La lecture supporte les deux noms (rétro-compat lors du switch HTTP↔HTTPS).
+	sessionCookieName       = "coach_sid"
+	sessionCookieNameSecure = "__Host-coach_sid"
+	csrfCookieName          = "coach_csrf"
+	csrfCookieNameSecure    = "__Host-coach_csrf"
+	csrfHeaderName          = "X-CSRF-Token"
 )
+
+// pickCookieName retourne le nom de cookie à utiliser selon le contexte HTTPS.
+// Sur HTTPS, on préfère __Host- (sécurité renforcée). Sur HTTP, on garde le
+// nom legacy car __Host- exige Secure (incompatible).
+func pickCookieName(r *http.Request, secureName, legacyName string) string {
+	if isHTTPS(r) {
+		return secureName
+	}
+	return legacyName
+}
 
 type ctxKey int
 
@@ -118,15 +135,26 @@ func destroyAllSessionsFor(userID string) {
 }
 
 func sessionID(r *http.Request) string {
-	c, err := r.Cookie(sessionCookieName)
-	if err != nil {
-		return ""
+	// Audit M-03 : lit les deux noms pour tolérer le switch HTTP↔HTTPS
+	// (cookie sans prefix posé en HTTP, puis migration vers HTTPS).
+	if c, err := r.Cookie(sessionCookieNameSecure); err == nil && c.Value != "" {
+		return c.Value
 	}
-	return c.Value
+	if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
+		return c.Value
+	}
+	return ""
 }
 
 // currentUser resolves the request to a user id, or "" if anonymous.
 // Consults context cache first (populated by requireAuth) to avoid re-looking up.
+//
+// Audit L-01 : sliding TTL — quand une session est utilisée et qu'il reste
+// moins de la moitié du TTL avant expiration, on prolonge. Cap : on ne va
+// jamais au-delà de sessionTTL après le dernier accès (pas d'accumulation
+// infinie). Sans sliding, un user actif tous les jours verrait sa session
+// expirer pile à 30j sans warning ; avec sliding, l'inactivité prolongée
+// expire correctement mais l'usage régulier prolonge l'authentification.
 func currentUser(r *http.Request) string {
 	if v, ok := r.Context().Value(userCtxKey).(string); ok && v != "" {
 		return v
@@ -141,9 +169,22 @@ func currentUser(r *http.Request) string {
 	if !ok {
 		return ""
 	}
-	if s.ExpiresAt.Before(time.Now()) {
+	now := time.Now()
+	if s.ExpiresAt.Before(now) {
 		destroySession(sid)
 		return ""
+	}
+	// Sliding : si on est dans la seconde moitié de la fenêtre, prolonger.
+	// Pas de write disque ici (saveSessions est async dans le janitor) pour
+	// ne pas alourdir chaque requête authentifiée.
+	half := sessionTTL / 2
+	if now.Sub(s.CreatedAt) > half {
+		sessionsMu.Lock()
+		if s2, ok := sessions[sid]; ok {
+			s2.ExpiresAt = now.Add(sessionTTL)
+			sessions[sid] = s2
+		}
+		sessionsMu.Unlock()
 	}
 	return s.UserID
 }
@@ -165,8 +206,9 @@ func isHTTPS(r *http.Request) bool {
 }
 
 func setSessionCookie(w http.ResponseWriter, r *http.Request, sid string) {
+	name := pickCookieName(r, sessionCookieNameSecure, sessionCookieName)
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
+		Name:     name,
 		Value:    sid,
 		Path:     "/",
 		HttpOnly: true,
@@ -177,29 +219,29 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, sid string) {
 }
 
 func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-		Secure:   isHTTPS(r),
-		MaxAge:   -1,
-	})
+	// On efface les DEUX variantes pour que le passage HTTPS↔HTTP nettoie tout.
+	for _, n := range []string{sessionCookieName, sessionCookieNameSecure} {
+		http.SetCookie(w, &http.Cookie{
+			Name: n, Value: "", Path: "/", HttpOnly: true,
+			SameSite: http.SameSiteStrictMode,
+			// __Host- exige Secure même pour clear ; pour le nom legacy on suit isHTTPS.
+			Secure: n == sessionCookieNameSecure || isHTTPS(r),
+			MaxAge: -1,
+		})
+	}
 }
 
 // clearCSRFCookie wipes the CSRF double-submit cookie. Called on logout so a
 // stale token can't linger in the browser after the session is gone.
 func clearCSRFCookie(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     csrfCookieName,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: false,
-		SameSite: http.SameSiteStrictMode,
-		Secure:   isHTTPS(r),
-		MaxAge:   -1,
-	})
+	for _, n := range []string{csrfCookieName, csrfCookieNameSecure} {
+		http.SetCookie(w, &http.Cookie{
+			Name: n, Value: "", Path: "/", HttpOnly: false,
+			SameSite: http.SameSiteStrictMode,
+			Secure:   n == csrfCookieNameSecure || isHTTPS(r),
+			MaxAge:   -1,
+		})
+	}
 }
 
 // setCSRFCookie issues a non-HttpOnly cookie holding a random token. The
@@ -207,8 +249,9 @@ func clearCSRFCookie(w http.ResponseWriter, r *http.Request) {
 // requests (double-submit pattern). Combined with SameSite=Strict on the
 // session cookie, this gives two independent CSRF defenses.
 func setCSRFCookie(w http.ResponseWriter, r *http.Request) {
+	name := pickCookieName(r, csrfCookieNameSecure, csrfCookieName)
 	http.SetCookie(w, &http.Cookie{
-		Name:     csrfCookieName,
+		Name:     name,
 		Value:    randHex(24),
 		Path:     "/",
 		HttpOnly: false,
@@ -229,8 +272,14 @@ func handleCSRF(w http.ResponseWriter, r *http.Request) {
 }
 
 func checkCSRF(r *http.Request) bool {
-	c, err := r.Cookie(csrfCookieName)
-	if err != nil || c.Value == "" {
+	// Lit les deux noms (Audit M-03 : tolère HTTP↔HTTPS).
+	var cookieVal string
+	if c, err := r.Cookie(csrfCookieNameSecure); err == nil && c.Value != "" {
+		cookieVal = c.Value
+	} else if c, err := r.Cookie(csrfCookieName); err == nil && c.Value != "" {
+		cookieVal = c.Value
+	}
+	if cookieVal == "" {
 		return false
 	}
 	h := r.Header.Get(csrfHeaderName)
@@ -238,5 +287,5 @@ func checkCSRF(r *http.Request) bool {
 		return false
 	}
 	// Constant-time compare to avoid timing leaks.
-	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(h)) == 1
+	return subtle.ConstantTimeCompare([]byte(cookieVal), []byte(h)) == 1
 }

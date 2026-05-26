@@ -26,14 +26,18 @@
  * network; failure propagates to the client which surfaces a toast.
  */
 
-const SHELL_VERSION = 'coach-shell-v3';
+// Bump à v4 : ajout de /static/app.css extrait de index.html (audit M-02).
+// L'ancienne cache v3 servait l'index.html qui contenait le CSS inline →
+// l'écraser pour que tout le monde récupère le nouveau bundle HTML+CSS séparé.
+const SHELL_VERSION = 'coach-shell-v5';
 const DATA_VERSION  = 'coach-data-v1';
 
-// Tous les JS chargés par index.html doivent être ici, sinon offline foire à
-// la première visite avant que la cache opportuniste ait eu le temps de les
-// chopper. Liste à garder synchro avec les <script src> du HTML.
+// Tous les JS et CSS chargés par index.html doivent être ici, sinon offline
+// foire à la première visite avant que la cache opportuniste ait eu le temps
+// de les chopper. Liste à garder synchro avec les <link> et <script src> du HTML.
 const SHELL_ASSETS = [
   '/',
+  '/static/app.css',
   '/static/app.js',
   '/static/qrcode.js',
   '/static/rehab.js',
@@ -41,6 +45,7 @@ const SHELL_ASSETS = [
   '/static/programming.js',
   '/static/bayesian.js',
   '/static/banister.js',
+  '/static/science.js',
   '/manifest.json',
   '/icon.svg',
 ];

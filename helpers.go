@@ -18,6 +18,33 @@ import (
 	"sync"
 )
 
+// getenvOrFile lit une variable d'environnement, OU si <NAME>_FILE est défini,
+// le contenu du fichier référencé (pattern Docker secrets / Compose secrets
+// standard). Trim final, ignore le \n des fichiers générés par `printf`/`echo`.
+//
+// Audit H-02 : permet de garder COACH_TOKEN_KEY hors de `docker inspect` et
+// `/proc/PID/environ` — un opérateur peut monter un tmpfs ou un Docker secret
+// dans /run/secrets/coach_token_key et exporter COACH_TOKEN_KEY_FILE=/run/secrets/coach_token_key.
+//
+// Ordre de priorité :
+//   1. <NAME>_FILE non vide → lit le fichier
+//   2. <NAME> non vide       → utilise directement
+//   3. defaultVal (si fourni, sinon "")
+func getenvOrFile(name, defaultVal string) string {
+	if path := strings.TrimSpace(os.Getenv(name + "_FILE")); path != "" {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			log.Printf("getenvOrFile: cannot read %s (%s): %v", name+"_FILE", path, err)
+			return defaultVal
+		}
+		return strings.TrimRight(string(b), "\r\n\t ")
+	}
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
 // hashEmailForLog renvoie un identifiant non-réversible (sha256 préfixe 8 chars)
 // de l'email, tout en gardant le domaine en clair pour qu'un admin puisse
 // distinguer "@gmail.com" de "@protonmail.com" lors d'un debug légitime.
@@ -92,7 +119,8 @@ var (
 // Renvoie nil si la clé est définie et valide ; sinon une erreur claire.
 func initTokenAEAD() error {
 	tokenAEADOnce.Do(func() {
-		key := strings.TrimSpace(os.Getenv("COACH_TOKEN_KEY"))
+		// Audit H-02 : supporte aussi COACH_TOKEN_KEY_FILE (pattern Docker secret).
+		key := strings.TrimSpace(getenvOrFile("COACH_TOKEN_KEY", ""))
 		if key == "" {
 			tokenAEADErr = errors.New("COACH_TOKEN_KEY non défini")
 			return

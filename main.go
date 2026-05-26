@@ -65,8 +65,11 @@ func main() {
 	loadUsers()
 	ensureBootstrapAdmin()
 	loadSessions()
+	// Audit M-04 : recharge le rate limit depuis disk avant d'accepter du trafic.
+	loadRateLimit()
 	go sessionJanitor()
 	go rateLimitJanitor()
+	go rateLimitSnapshotter()
 	startAuditJanitor() // rotation du journal d'audit à 12 mois (RGPD)
 	rebuildStravaAthleteIndex() // map athleteID → uid pour le webhook
 	go stravaJanitor()          // purge des states OAuth pending expirés
@@ -176,6 +179,20 @@ func main() {
 	mux.HandleFunc("GET /icon.svg", servePWAFile("icon.svg", "image/svg+xml", "public, max-age=86400"))
 	mux.HandleFunc("GET /{$}", serveIndex)
 
+	// Audit L-03 : endpoint /healthz dédié, court, NON loggé par accessLog
+	// pour éviter de polluer les access logs avec le check Docker toutes les 30s.
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("ok\n"))
+	})
+
+	// Audit L-04 : endpoint qui collecte les rapports CSP. Permet de détecter
+	// une XSS introduite (escapeHtml manquant, dépendance ajoutée mal sandboxée)
+	// via une remontée structurée. On rate-limit dur pour éviter abuse.
+	mux.HandleFunc("POST /api/csp-report",
+		rateLimit("csp_report", 60, 1*time.Minute, handleCSPReport))
+
 	// Middleware chain: outermost first.
 	handler := chain(mux,
 		recoverPanic,    // catch-all for panics, returns 500 without leaking stack
@@ -208,6 +225,7 @@ func main() {
 	defer cancel()
 	_ = srv.Shutdown(ctx)
 	saveSessions()
+	saveRateLimit() // Audit M-04 : flush final
 	log.Println("bye")
 }
 
@@ -238,12 +256,15 @@ func serveAdmin(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filepath.Join(publicDir, "admin.html"))
 }
 
-// runHealthcheck est appelé en mode --healthcheck. Hit /privacy (route
-// publique, pas de rate limit, retourne 200 stable) sur l'adresse de listen
-// et exit 0/1. Pas de log, pas de stderr — Docker considère le code retour.
+// runHealthcheck est appelé en mode --healthcheck. Hit /healthz (route
+// dédiée, non loggée, pas de rate limit, retourne 200 stable) sur l'adresse
+// de listen et exit 0/1. Pas de log, pas de stderr — Docker considère le code retour.
 //
 // L'adresse cible : si COACH_LISTEN est `0.0.0.0:8080` (mode container),
 // on hit `127.0.0.1:8080`. Si c'est déjà 127.0.0.1:..., on garde tel quel.
+//
+// Audit L-03 : avant on hit /privacy (loggé dans accessLog → 2880 lignes/jour
+// de bruit). /healthz est skip dans accessLog → logs propres.
 func runHealthcheck() {
 	target := listenAddr
 	if strings.HasPrefix(target, "0.0.0.0:") {
@@ -251,7 +272,7 @@ func runHealthcheck() {
 	} else if strings.HasPrefix(target, ":") {
 		target = "127.0.0.1" + target
 	}
-	url := "http://" + target + "/privacy"
+	url := "http://" + target + "/healthz"
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {

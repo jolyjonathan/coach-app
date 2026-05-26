@@ -110,6 +110,19 @@
         { ref: 'bulgare', sets: 2, reps: 8, rest: 45 },
       ],
     },
+    {
+      // Petersen 2011 (Am J Sports Med) : RCT chez 942 footeurs danois.
+      // 3×10 eccentric 2×/sem → -70% d'incidence de claquage ischios sur 9 mois.
+      // Méta-analyse van Dyk 2019 (Br J Sports Med) confirme : -51% sur 14 RCT.
+      // À faire EN PRÉVENTIF, idéalement séparé d'au moins 48h d'une grosse séance
+      // jambes — les courbatures eccentriques sont massives la première semaine.
+      id: 'snack-nordic-hams', name: 'Nordic Hamstring (prévention)', category: 'force_pdc',
+      duration: 6, gear: 'ancrage',
+      desc: 'Petersen 2011 — protocole anti-claquage ischios validé RCT.',
+      exos: [
+        { ref: 'nordic', sets: 3, reps: 6, rest: 90 },
+      ],
+    },
 
     // --- GAINAGE ---
     {

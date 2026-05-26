@@ -295,22 +295,89 @@ sudo chown -R coach:coach /var/lib/coach-app
 Voir `deploy/coach.service` pour le unit systemd type.
 
 ### Docker / Conteneur
+
+Déploiement minimal, sans reverse proxy. L'app écoute en HTTP direct sur
+le port exposé du host — adapté à un usage local, LAN, ou derrière un
+VPN/tunnel (Tailscale, Cloudflare Tunnel...).
+
 ```bash
-# Génère ta clé et écris-la dans .env
+# 1. Configure le .env
 cp .env.example .env
-echo "COACH_TOKEN_KEY=$(openssl rand -hex 32)" >> .env
-echo "COACH_ADMIN_EMAIL=admin@exemple.fr"       >> .env
+echo "COACH_TOKEN_KEY=$(openssl rand -hex 32)"         >> .env
+echo "COACH_ADMIN_EMAIL=admin@exemple.fr"              >> .env
 echo "COACH_ADMIN_PASSWORD=$(openssl rand -base64 24)" >> .env
 
+# 2. Lance
 docker compose up -d
-docker compose logs coach-app | grep "bootstrap admin"
 
-# Une fois l'admin créé, retire les vars admin du .env et restart
-# (sinon le password est réécrit à chaque restart).
+# 3. Récupère les creds admin dans les logs
+docker compose logs coach-app | grep -i admin
+
+# 4. Ouvre http://<ip-du-host>:8080 (ou COACH_PORT si redéfini)
 ```
 
+Une fois l'admin créé, retire `COACH_ADMIN_EMAIL` et `COACH_ADMIN_PASSWORD`
+du `.env` et `docker compose up -d` à nouveau (sinon le password est
+réécrit à chaque restart).
+
+**Personnaliser le port** : `COACH_PORT=9000` dans `.env` → expose sur 9000.
+Pour ne binder que sur localhost (typiquement si tu rajoutes un reverse
+proxy plus tard) : `COACH_PORT=127.0.0.1:8080`.
+
+**HTTPS** : pas géré nativement. Pour exposer publiquement avec TLS, mets
+un reverse proxy devant (nginx, Caddy, Traefik) et passe `COACH_TRUST_PROXY=1`
+dans `.env`. Pour un accès distant sécurisé sans gérer de certif, un
+tunnel type Cloudflare Tunnel ou Tailscale Funnel fait le job.
+
+### Production / exposition Internet — checklist sécurité
+
+**Avant** d'exposer l'app sur Internet public, valider :
+
+1. **TLS obligatoire** — credentials, cookies de session, codes 2FA et
+   données de santé passent en clair sans HTTPS. Options :
+   - Reverse proxy (Caddy automatise Let's Encrypt) :
+     ```caddyfile
+     coach.exemple.com {
+       reverse_proxy 127.0.0.1:8080
+     }
+     ```
+     Mettre `COACH_PORT=127.0.0.1:8080` dans `.env` et `COACH_TRUST_PROXY=1`.
+   - Tunnel chiffré : Cloudflare Tunnel, Tailscale Funnel, ngrok TLS.
+   - Pas de TLS natif Go intégré pour l'instant.
+
+2. **Secrets hors environnement** — pattern `_FILE` supporté pour éviter que
+   `COACH_TOKEN_KEY`, `COACH_ADMIN_PASSWORD`, `STRAVA_CLIENT_SECRET` etc.
+   apparaissent dans `docker inspect` ou `/proc/PID/environ`. Exemple avec
+   Docker secrets ou bind-mount tmpfs :
+   ```yaml
+   environment:
+     COACH_TOKEN_KEY_FILE: /run/secrets/coach_token_key
+   secrets:
+     - coach_token_key
+   ```
+   Le binaire lit `COACH_TOKEN_KEY_FILE` en priorité sur `COACH_TOKEN_KEY`.
+
+3. **Pin des images Docker par digest** — `docker:1.22-alpine` et
+   `gcr.io/distroless/static-debian12:nonroot` sont des tags mutables.
+   Lancer `./scripts/pin-images.sh` une fois par mois (et avant chaque
+   release) pour figer les digests SHA256 — protège contre une compromission
+   en amont du registry.
+
+4. **Retirer les vars admin** après le premier boot : `COACH_ADMIN_EMAIL`
+   et `COACH_ADMIN_PASSWORD` du `.env`. Le serveur pose une sentinelle
+   `data/.admin-bootstrap-done` après le premier passage et n'écrasera plus
+   le password aux restarts suivants (même si tu oublies les vars).
+
+5. **Audit log** : `data/auth-audit.log` (JSON Lines) trace login / logout /
+   change password / 2FA setup-verify-disable. À surveiller post-incident.
+   Pas de rotation auto pour l'instant — utiliser `logrotate` côté hôte.
+
+6. **CSP report-uri** : les violations CSP sont loggées dans la sortie standard
+   (chercher `CSP-VIOLATION`). Une remontée en production indique une XSS
+   tentée ou une dépendance frontend ajoutée mal whitelistée.
+
 L'image finale est `gcr.io/distroless/static`. Le binaire est statique
-(CGO_ENABLED=0). Le volume `data:/data` doit persister entre redémarrages.
+(CGO_ENABLED=0). Le volume `coach_data:/data` persiste entre redémarrages.
 
 ## Développement
 

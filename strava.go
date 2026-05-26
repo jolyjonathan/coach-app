@@ -109,12 +109,14 @@ var (
 // répondent un 503 "Strava non configuré". L'idée : un opérateur sans
 // app Strava peut quand même boot le serveur.
 func stravaConfigured() bool {
-	return os.Getenv("STRAVA_CLIENT_ID") != "" && os.Getenv("STRAVA_CLIENT_SECRET") != ""
+	return stravaClientID() != "" && stravaClientSecret() != ""
 }
 
-func stravaClientID() string     { return os.Getenv("STRAVA_CLIENT_ID") }
-func stravaClientSecret() string { return os.Getenv("STRAVA_CLIENT_SECRET") }
-func stravaVerifyToken() string  { return os.Getenv("STRAVA_VERIFY_TOKEN") }
+// Audit H-02 : utilisent getenvOrFile pour supporter le pattern *_FILE
+// (secrets dans /run/secrets/* plutôt que dans l'env du process).
+func stravaClientID() string     { return getenvOrFile("STRAVA_CLIENT_ID", "") }
+func stravaClientSecret() string { return getenvOrFile("STRAVA_CLIENT_SECRET", "") }
+func stravaVerifyToken() string  { return getenvOrFile("STRAVA_VERIFY_TOKEN", "") }
 
 // stravaRedirectURI calcule l'URL de callback. STRAVA_REDIRECT_URI a la
 // priorité ; sinon on utilise le scheme/host de la requête. Doit matcher

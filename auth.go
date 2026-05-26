@@ -25,10 +25,14 @@ type User struct {
 	IsAdmin      bool      `json:"isAdmin,omitempty"`
 	// TOTPSecret is empty when 2FA is disabled. When set, login must include a
 	// valid 6-digit code from an Authenticator app (Google/Authy/etc.).
-	// Stored in plaintext base32 — protecting it is the same as protecting
-	// the password hash file (data dir is 0700, file is 0600). Encrypting it
-	// at rest with a server-derived key is a follow-up if we ever ship for
-	// real multi-tenant use.
+	//
+	// Audit H-03 : chiffré at-rest via encryptToken/decryptToken (AES-256-GCM
+	// avec COACH_TOKEN_KEY). Le fichier stocké contient `ENC:v1:...` ; les
+	// anciens enregistrements en cleartext base32 sont migrés au load via
+	// reencryptTotpSecret (idempotent). Les helpers getUserTotpSecret /
+	// setUserTotpSecret encapsulent le chiffrement — TOUJOURS passer par eux,
+	// jamais lire/écrire u.TOTPSecret directement après l'introduction de
+	// cette enveloppe (sinon bug de migration partielle).
 	TOTPSecret string `json:"totpSecret,omitempty"`
 
 	// HealthConsent records the user's explicit consent to process health data
@@ -109,7 +113,8 @@ func loadUsers() {
 	if err := json.Unmarshal(b, &list); err != nil {
 		log.Fatalf("users parse: %v", err)
 	}
-	migrated := 0
+	migratedTok := 0
+	migratedTotp := 0
 	for _, u := range list {
 		usersByID[u.ID] = u
 		usersByEm[u.EmailLower] = u
@@ -117,12 +122,17 @@ func loadUsers() {
 		// Si la clé COACH_TOKEN_KEY n'est pas dispo, le re-encrypt
 		// loggue un warning et garde cleartext (mode dégradé).
 		if reencryptUserTokens(u) {
-			migrated++
+			migratedTok++
+		}
+		// Audit H-03 : migration TOTPSecret cleartext base32 → chiffré.
+		if reencryptTotpSecret(u) {
+			migratedTotp++
 		}
 	}
-	if migrated > 0 {
+	if migratedTok > 0 || migratedTotp > 0 {
 		go saveUsers() // flush sans bloquer le boot
-		log.Printf("loaded %d users (migrated %d cleartext tokens)", len(list), migrated)
+		log.Printf("loaded %d users (migrated %d cleartext API tokens, %d cleartext TOTP secrets)",
+			len(list), migratedTok, migratedTotp)
 	} else {
 		log.Printf("loaded %d users", len(list))
 	}
@@ -176,6 +186,108 @@ func validPassword(s string) error {
 		}
 	}
 	return nil
+}
+
+/* =============================================================
+ * Audit L-02 : journal d'audit des événements d'authentification.
+ *
+ * Format JSON Lines dans data/auth-audit.log :
+ *   {"ts":"2026-05-24T10:00:00Z","event":"login","user":"abc12345@example.com","ip":"1.2.3.4","success":true}
+ *
+ * Events traçés :
+ *   - login (success / failure / reason)
+ *   - logout
+ *   - register
+ *   - change_password
+ *   - 2fa_setup, 2fa_verify, 2fa_disable
+ *
+ * Toutes les valeurs sont passées par hashEmailForLog → l'email cleartext ne
+ * fuit jamais dans le journal. Rotation déléguée à logrotate côté hôte
+ * (ou au janitor de admin-audit.log pour un setup conteneur). Permissions
+ * 0600 sur le fichier.
+ * ============================================================= */
+
+type authAuditEntry struct {
+	TS      string `json:"ts"`
+	Event   string `json:"event"`
+	UserRef string `json:"user,omitempty"`  // hashEmailForLog ou userID
+	IP      string `json:"ip,omitempty"`
+	Success bool   `json:"success"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+var authAuditMu sync.Mutex
+
+func authAuditFile() string { return filepath.Join(dataDir, "auth-audit.log") }
+
+// logAuthEvent append une ligne au journal. Best-effort : échoue silencieux
+// si on ne peut pas écrire (le service doit continuer de fonctionner même si
+// le disque est plein — la sécurité applicative n'en dépend pas).
+func logAuthEvent(event, userRef, ip string, success bool, reason string) {
+	e := authAuditEntry{
+		TS:      time.Now().UTC().Format(time.RFC3339),
+		Event:   event,
+		UserRef: userRef,
+		IP:      ip,
+		Success: success,
+		Reason:  reason,
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		return
+	}
+	authAuditMu.Lock()
+	defer authAuditMu.Unlock()
+	f, err := os.OpenFile(authAuditFile(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(append(b, '\n'))
+}
+
+// getUserTotpSecret renvoie le secret TOTP en clair (base32), déchiffré si
+// nécessaire. Renvoie "" si pas de 2FA configurée ou si la clé est indispo
+// (mode dégradé : le check 2FA échouera mais on évite le panic).
+func getUserTotpSecret(u *User) string {
+	if u == nil || u.TOTPSecret == "" {
+		return ""
+	}
+	plain, err := decryptToken(u.TOTPSecret)
+	if err != nil {
+		log.Printf("getUserTotpSecret: decrypt failed for user %s: %v", u.ID, err)
+		return ""
+	}
+	return plain
+}
+
+// setUserTotpSecret stocke le secret TOTP chiffré. Doit être appelé sous
+// usersMu.Lock(). Si la clé n'est pas dispo, fallback cleartext (loggé) pour
+// ne pas bloquer le setup 2FA.
+func setUserTotpSecret(u *User, plainSecret string) {
+	if u == nil {
+		return
+	}
+	if plainSecret == "" {
+		u.TOTPSecret = ""
+		return
+	}
+	u.TOTPSecret = encryptToken(plainSecret)
+}
+
+// reencryptTotpSecret migre un secret stocké en cleartext (legacy base32) vers
+// la forme chiffrée AES-GCM. Idempotent : déjà chiffré → no-op. Renvoie true
+// si une migration a eu lieu pour que loadUsers puisse compter.
+func reencryptTotpSecret(u *User) bool {
+	if u == nil || u.TOTPSecret == "" {
+		return false
+	}
+	if strings.HasPrefix(u.TOTPSecret, encPrefix) {
+		return false  // déjà chiffré
+	}
+	// On a un secret legacy en clair. Le chiffrer.
+	u.TOTPSecret = encryptToken(u.TOTPSecret)
+	return strings.HasPrefix(u.TOTPSecret, encPrefix)  // confirme que le chiffrement a marché
 }
 
 func handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -235,6 +347,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	sid := createSession(u.ID)
 	setSessionCookie(w, r, sid)
 	setCSRFCookie(w, r)
+	logAuthEvent("register", hashEmailForLog(email), clientIP(r), true, "")
 	// Newly-registered users have no TOTPSecret yet, so when 2FA is required
 	// they will see needsEnroll2FA=true and the SPA will route them to the
 	// enrollment screen on first paint.
@@ -270,6 +383,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	err := bcrypt.CompareHashAndPassword(hash, []byte(req.Password))
 	if u == nil || err != nil {
+		logAuthEvent("login", hashEmailForLog(email), clientIP(r), false, "bad_credentials")
 		writeErr(w, http.StatusUnauthorized, "identifiants invalides")
 		return
 	}
@@ -284,7 +398,8 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		if !verifyTOTP(u.TOTPSecret, strings.TrimSpace(req.TOTPCode)) {
+		if !verifyTOTP(getUserTotpSecret(u), strings.TrimSpace(req.TOTPCode)) {
+			logAuthEvent("login", hashEmailForLog(email), clientIP(r), false, "bad_totp")
 			writeErr(w, http.StatusUnauthorized, "code 2FA invalide")
 			return
 		}
@@ -299,6 +414,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	sid := createSession(u.ID)
 	setSessionCookie(w, r, sid)
 	setCSRFCookie(w, r)
+	logAuthEvent("login", hashEmailForLog(u.EmailLower), clientIP(r), true, "")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":             true,
 		"userId":         u.ID,
@@ -310,11 +426,17 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleLogout(w http.ResponseWriter, r *http.Request) {
+	uid := currentUser(r)
 	if sid := sessionID(r); sid != "" {
 		destroySession(sid)
 	}
 	clearSessionCookie(w, r)
 	clearCSRFCookie(w, r)
+	if uid != "" {
+		if u := getUserByID(uid); u != nil {
+			logAuthEvent("logout", hashEmailForLog(u.EmailLower), clientIP(r), true, "")
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -434,12 +556,19 @@ func handleAlgoOptOut(w http.ResponseWriter, r *http.Request) {
 // ensureBootstrapAdmin promotes or creates the admin account referenced by the
 // COACH_ADMIN_EMAIL / COACH_ADMIN_PASSWORD env vars at startup. This is the
 // ONLY server-side path that can mint an admin; once a real admin exists, they
-// promote/demote peers through the admin API. We log (without secrets) exactly
-// what happened so the operator can confirm bootstrap ran and then unset the
-// env vars.
+// promote/demote peers through the admin API.
+//
+// Audit H-02 : COACH_ADMIN_PASSWORD_FILE supporté pour éviter le secret dans
+// l'environnement du process (cf. helpers.go > getenvOrFile).
+//
+// Audit M-05 : sentinelle data/.admin-bootstrap-done évite la rotation
+// silencieuse du mot de passe à chaque restart si l'opérateur oublie de
+// retirer COACH_ADMIN_PASSWORD du .env. Une fois le sentinel posé, on logge
+// un warning et on n'écrase plus le password. Pour forcer une re-rotation :
+// supprimer manuellement data/.admin-bootstrap-done.
 func ensureBootstrapAdmin() {
-	email := strings.ToLower(strings.TrimSpace(os.Getenv("COACH_ADMIN_EMAIL")))
-	pass := os.Getenv("COACH_ADMIN_PASSWORD")
+	email := strings.ToLower(strings.TrimSpace(getenvOrFile("COACH_ADMIN_EMAIL", "")))
+	pass := getenvOrFile("COACH_ADMIN_PASSWORD", "")
 	if email == "" || pass == "" {
 		return
 	}
@@ -451,6 +580,14 @@ func ensureBootstrapAdmin() {
 		log.Printf("bootstrap admin skipped: COACH_ADMIN_PASSWORD weak (%v)", err)
 		return
 	}
+	sentinel := filepath.Join(dataDir, ".admin-bootstrap-done")
+	if _, err := os.Stat(sentinel); err == nil {
+		// Déjà bootstrapé. On ne touche pas au mot de passe pour ne pas écraser
+		// silencieusement une rotation faite via l'admin UI. L'opérateur peut
+		// supprimer manuellement le fichier pour forcer une re-rotation.
+		log.Printf("bootstrap admin: sentinel present, ignoring COACH_ADMIN_PASSWORD (remove %s to force re-rotation)", sentinel)
+		return
+	}
 	usersMu.Lock()
 	defer usersMu.Unlock()
 	if u, ok := usersByEm[email]; ok {
@@ -459,8 +596,6 @@ func ensureBootstrapAdmin() {
 			u.IsAdmin = true
 			changed = true
 		}
-		// Re-hash the password on every start when env vars are set — this lets
-		// an operator rotate the admin password by just restarting the process.
 		hash, err := bcrypt.GenerateFromPassword([]byte(pass), 12)
 		if err == nil {
 			u.PasswordHash = string(hash)
@@ -468,8 +603,14 @@ func ensureBootstrapAdmin() {
 		}
 		if changed {
 			go saveUsers()
-			log.Printf("bootstrap admin: existing user %s promoted/rotated", hashEmailForLog(email))
+			// Audit M-05 : on tue aussi les autres sessions de cet admin pour
+			// qu'une éventuelle session active hijackée avant la rotation ne
+			// survive pas à la rotation.
+			go destroyAllSessionsFor(u.ID)
+			log.Printf("bootstrap admin: existing user %s promoted/rotated (other sessions destroyed)", hashEmailForLog(email))
 		}
+		// Pose le sentinel pour ne plus rotater au prochain boot.
+		_ = os.WriteFile(sentinel, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(pass), 12)
@@ -487,7 +628,9 @@ func ensureBootstrapAdmin() {
 	usersByID[u.ID] = u
 	usersByEm[email] = u
 	go saveUsers()
-	log.Printf("bootstrap admin: created admin user %s", hashEmailForLog(email))
+	// Sentinel posé après création réussie.
+	_ = os.WriteFile(sentinel, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
+	log.Printf("bootstrap admin: created admin user %s (sentinel posted at %s)", hashEmailForLog(email), sentinel)
 }
 
 // getUserByID returns a user record pointer under a read lock, or nil.
@@ -546,6 +689,7 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword(hash, []byte(req.OldPassword)); err != nil {
+		logAuthEvent("change_password", hashEmailForLog(u.EmailLower), clientIP(r), false, "bad_old_password")
 		writeErr(w, http.StatusUnauthorized, "ancien mot de passe incorrect")
 		return
 	}
@@ -570,6 +714,7 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	sid := createSession(uid)
 	setSessionCookie(w, r, sid)
 	setCSRFCookie(w, r)
+	logAuthEvent("change_password", hashEmailForLog(u.EmailLower), clientIP(r), true, "other_sessions_killed")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -648,14 +793,17 @@ func handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	usersMu.Lock()
+	var emailLower string
 	if u := usersByID[uid]; u != nil {
-		u.TOTPSecret = secret
+		setUserTotpSecret(u, secret)
+		emailLower = u.EmailLower
 	}
 	usersMu.Unlock()
 	saveUsers()
 	pending2FAMu.Lock()
 	delete(pending2FA, uid)
 	pending2FAMu.Unlock()
+	logAuthEvent("2fa_setup", hashEmailForLog(emailLower), clientIP(r), true, "")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -686,15 +834,17 @@ func handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword(hash, []byte(req.Password)); err != nil {
+		logAuthEvent("2fa_disable", hashEmailForLog(u.EmailLower), clientIP(r), false, "bad_password")
 		writeErr(w, http.StatusUnauthorized, "mot de passe incorrect")
 		return
 	}
 	usersMu.Lock()
 	if u2 := usersByID[uid]; u2 != nil {
-		u2.TOTPSecret = ""
+		setUserTotpSecret(u2, "")
 	}
 	usersMu.Unlock()
 	saveUsers()
+	logAuthEvent("2fa_disable", hashEmailForLog(u.EmailLower), clientIP(r), true, "")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

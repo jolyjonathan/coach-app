@@ -22,7 +22,8 @@ async function api(method, path, body) {
   const headers = { 'Accept': 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (method !== 'GET' && method !== 'HEAD') {
-    const t = getCookie('coach_csrf');
+    // Audit M-03 : préfère __Host- sur HTTPS.
+    const t = getCookie('__Host-coach_csrf') || getCookie('coach_csrf');
     if (t) headers['X-CSRF-Token'] = t;
   }
   const res = await fetch(path, {

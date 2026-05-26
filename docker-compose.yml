@@ -1,24 +1,38 @@
 # =============================================================
 # Coach Adaptatif — docker-compose
 # =============================================================
-# Usage :
+# Usage minimal (sans reverse proxy, accès HTTP direct) :
 #   1. cp .env.example .env
-#   2. Éditer .env (au minimum COACH_TOKEN_KEY)
+#   2. Éditer .env (au minimum COACH_TOKEN_KEY ; COACH_PORT optionnel)
 #   3. docker compose up -d
+#   4. Ouvrir http://<ip-du-host>:8080 (ou le port choisi)
 #
-# Premier lancement : ajoute aussi COACH_ADMIN_EMAIL et COACH_ADMIN_PASSWORD
+# Premier lancement : ajouter aussi COACH_ADMIN_EMAIL et COACH_ADMIN_PASSWORD
 # dans .env. Les retirer après que l'admin soit créé (sinon le mot de passe
 # est réécrit à chaque restart).
+#
+# Note TLS : l'app sert du HTTP. Pour exposer publiquement avec HTTPS,
+# voir le bloc « reverse proxy (optionnel) » plus bas ou utiliser un
+# tunnel (Cloudflare Tunnel, Tailscale Funnel, etc.). Pour un usage local
+# ou sur LAN/VPN privé, HTTP direct suffit.
 # =============================================================
 
 services:
   coach-app:
     build: .
     image: coach-app:latest
+    # Force le build local. Sans ça, compose tente un `docker pull
+    # coach-app:latest` avant de tomber sur le build → ligne de warning
+    # "pull access denied" cosmétique mais déroutante.
+    pull_policy: build
     container_name: coach-app
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:8080"   # bind localhost — mettre derrière nginx/Caddy pour TLS
+      # Bind direct sur toutes les interfaces du host. Port host configurable
+      # via COACH_PORT dans .env (défaut 8080). Pour restreindre à localhost
+      # (ex. derrière un reverse proxy local), préfixer par 127.0.0.1: dans .env :
+      #   COACH_PORT=127.0.0.1:8080
+      - "${COACH_PORT:-8080}:8080"
     volumes:
       - coach_data:/data
     environment:
@@ -26,10 +40,12 @@ services:
       COACH_LISTEN:               0.0.0.0:8080
       COACH_DATA:                 /data
       COACH_PUBLIC:               /app/public
-      COACH_TRUST_PROXY:          ${COACH_TRUST_PROXY:-1}    # 1 si derrière reverse proxy
+      # Pas de reverse proxy par défaut → on ne fait pas confiance aux
+      # X-Forwarded-*. Passer à 1 uniquement si tu mets nginx/Caddy devant.
+      COACH_TRUST_PROXY:          ${COACH_TRUST_PROXY:-0}
       COACH_ALLOW_REGISTRATION:   ${COACH_ALLOW_REGISTRATION:-0}
       COACH_2FA_REQUIRED:         ${COACH_2FA_REQUIRED:-1}
-      COACH_TOKEN_KEY:            ${COACH_TOKEN_KEY:?missing in .env, run: openssl rand -hex 32}
+      COACH_TOKEN_KEY:            "${COACH_TOKEN_KEY:?missing in .env, generate with: openssl rand -hex 32}"
       COACH_ADMIN_EMAIL:          ${COACH_ADMIN_EMAIL:-}
       COACH_ADMIN_PASSWORD:       ${COACH_ADMIN_PASSWORD:-}
       # Intégration Strava — vides = bouton "Se connecter" désactivé.

@@ -296,7 +296,9 @@ async function api(method, path, body) {
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   // CSRF: double-submit — echo the cookie value in a header on writes.
   if (method !== 'GET' && method !== 'HEAD') {
-    const t = getCookie('coach_csrf');
+    // Audit M-03 : sur HTTPS le cookie est nommé __Host-coach_csrf
+    // (durcissement préfixe). On lit les deux noms en fallback.
+    const t = getCookie('__Host-coach_csrf') || getCookie('coach_csrf');
     if (t) headers['X-CSRF-Token'] = t;
   }
   let res;
@@ -452,7 +454,7 @@ const EX = [
    desc:'Extension du coude, bras au-dessus de la tête — isole les triceps.',
    how:"Debout ou assis, un haltère tenu à deux mains au-dessus de la tête. Plie les coudes pour descendre la charge derrière la tête. Remonte en tendant les bras.",
    tips:['Coudes pointés vers le plafond, fixes — seul l\'avant-bras bouge.','Mouvement contrôlé — pas de à-coups.','Alternative : kick-back haltère (buste penché).']},
-  {id:'gainage',n:'Gainage (planche)',z:['core'],gear:['pdc'],pain:[],timed:true,
+  {id:'gainage',n:'Gainage (planche)',z:['core'],gear:['pdc'],pain:[],timed:true,floor:true,
    desc:'Position immobile sur avant-bras et pointes de pieds — renforce la sangle abdo-lombaire.',
    how:"Avant-bras au sol, coudes sous les épaules, corps aligné tête-talons. Gaine abdos, fessiers, et ne laisse pas les hanches tomber ni monter. Respire calmement.",
    tips:['Alignement PARFAIT : si les fesses montent ou tombent, arrête.','Regard vers le sol, nuque alignée avec le dos.','Mieux vaut 30s parfaites que 2min avachies.']},
@@ -484,7 +486,7 @@ const EX = [
    desc:'Développé couché avec banc incliné à 30-45° — cible haut de pecs.',
    how:"Banc incliné à 30-45°. Omoplates serrées, coudes à ~45°, descends jusqu'à la poitrine haute, remontes droit au-dessus.",
    tips:['Plus le banc est incliné, plus les épaules bossent (limite à 45°).','Ne cambre pas les lombaires pour tricher.']},
-  {id:'bulgare',n:'Fente bulgare',z:['legs'],gear:['pdc','halteres','kettlebell'],needs:['banc'],pain:['genou'],
+  {id:'bulgare',n:'Fente bulgare',z:['legs'],gear:['pdc','halteres','kettlebell'],needs:['banc'],pain:['genou'],unilateral:true,
    desc:'Fente avec le pied arrière surélevé sur un banc — unilatéral intense.',
    how:"Pied arrière sur un banc derrière toi, pied avant un grand pas devant. Descends en pliant le genou avant, torse droit. Remonte en poussant dans le talon avant.",
    tips:['Genou avant aligné sur la pointe du pied.','Torse vertical, charge sur la jambe avant.','Exercice dur : commence poids du corps.']},
@@ -492,7 +494,7 @@ const EX = [
   /* ============ CALISTHÉNIE / POIDS DU CORPS ============
    * Utilisables partout — chez soi, en extérieur, en park, ou en salle.
    * Beaucoup ciblent des zones peu couvertes par le matériel classique. */
-  {id:'pistol',n:'Pistol squat',z:['legs','core'],gear:['pdc'],pain:['genou'],
+  {id:'pistol',n:'Pistol squat',z:['legs','core'],gear:['pdc'],pain:['genou'],unilateral:true,
    desc:'Squat sur une seule jambe, l\'autre tendue devant — unilatéral extrême.',
    how:"Debout sur une jambe, l\'autre tendue devant toi. Descends en pliant le genou, buste légèrement penché pour garder l\'équilibre. Remonte en poussant dans le talon.",
    tips:['Tiens un pilier / TRX / élastique au début pour équilibrer.','Progresse d\'abord par des box squats unilatéraux.','Pied d\'appui bien à plat, genou aligné.']},
@@ -504,7 +506,7 @@ const EX = [
    desc:'Saut explosif sur une caisse / banc solide — puissance.',
    how:"Face à une caisse stable (30-60cm). Fléchis, lance les bras en arrière puis saute pour te poser les deux pieds sur la caisse. Redescends en marchant, pas en sautant.",
    tips:['Atterris PLIÉ, pas raide — absorbe.','Redescends marche par marche pour ménager les tendons.','Hauteur progressive — sécurité avant record.']},
-  {id:'stepup',n:'Montées sur banc',z:['legs'],gear:['pdc','halteres','kettlebell'],needs:['banc'],pain:['genou'],
+  {id:'stepup',n:'Montées sur banc',z:['legs'],gear:['pdc','halteres','kettlebell'],needs:['banc'],pain:['genou'],unilateral:true,
    desc:'Monter sur un banc une jambe à la fois — fonctionnel et unilatéral.',
    how:"Pied entier posé sur le banc. Pousse dans le talon pour monter debout, ramène l\'autre pied à côté. Redescends contrôlé. Alterne à chaque répétition ou fais une série par jambe.",
    tips:['Pas d\'élan avec la jambe arrière — c\'est la jambe avant qui fait tout.','Banc à hauteur de genou environ.','Charge tenue le long du corps avec haltères.']},
@@ -532,15 +534,15 @@ const EX = [
    desc:'Rowing suspendu sous une barre basse — alternative aux tractions.',
    how:"Barre à hauteur de hanches. Allonge-toi dessous, saisis la barre prise pronation largeur épaules, corps gainé droit. Tire la poitrine vers la barre, coudes près du corps. Redescends contrôlé.",
    tips:['Plus les pieds sont avancés, plus c\'est dur.','Corps rigide comme une planche inversée.','Parfait en park sur une barre basse ou entre deux supports.']},
-  {id:'superman',n:'Superman',z:['back','core'],gear:['pdc'],pain:['dos'],timed:true,
+  {id:'superman',n:'Superman',z:['back','core'],gear:['pdc'],pain:['dos'],timed:true,floor:true,
    desc:'Extension lombaire bras et jambes tendus, allongé sur le ventre — lombaires et fessiers.',
    how:"Allongé sur le ventre, bras tendus devant, jambes tendues. Décolle simultanément bras et jambes du sol en contractant lombaires et fessiers. Tiens 2s, redescends.",
    tips:['Menton rentré, regard vers le sol — pas de cassure nuque.','Contraction fessiers ET lombaires ensemble.','Version timed : tenue 20-40s.']},
-  {id:'hollow',n:'Hollow body hold',z:['core'],gear:['pdc'],pain:['dos'],timed:true,
+  {id:'hollow',n:'Hollow body hold',z:['core'],gear:['pdc'],pain:['dos'],timed:true,floor:true,
    desc:'Position \"banane inversée\" — gainage profond spécifique gym.',
    how:"Allongé sur le dos, bas du dos plaqué au sol. Décolle simultanément épaules, bras (tendus derrière la tête) et jambes (tendues). Forme de banane inversée. Respire.",
    tips:['Bas du dos COLLÉ au sol en permanence — si ça décolle, plie les genoux.','Bras le long des oreilles.','20-40s est déjà très bien.']},
-  {id:'sideplank',n:'Gainage latéral',z:['core'],gear:['pdc'],pain:['epaule'],timed:true,
+  {id:'sideplank',n:'Gainage latéral',z:['core'],gear:['pdc'],pain:['epaule'],timed:true,unilateral:true,floor:true,
    desc:'Planche sur un avant-bras et un pied — obliques.',
    how:"Sur le côté, avant-bras au sol coude sous l\'épaule, pieds empilés. Décolle les hanches du sol, corps aligné tête-pieds. Tiens. Change de côté.",
    tips:['Hanches bien hautes — pas de cassure au niveau des abdos latéraux.','Épaule stable au-dessus du coude.','Facile : appui sur le genou plutôt que le pied.']},
@@ -630,6 +632,16 @@ const EX = [
    desc:'Se relever du sol en tenant une KB au-dessus de la tête — full body, mobilité épaule.',
    how:"Allongé sur le dos, KB tenue à bout de bras au-dessus de l\'épaule droite. En 6-7 étapes méthodiques (coude, main, pont, passage de jambe, fente, debout), relève-toi sans jamais baisser la KB. Reviens par la même séquence.",
    tips:['LENT. Chaque étape doit être maîtrisée — c\'est technique, pas cardio.','Apprends à vide / avec chaussure, puis KB légère.','Bras VERTICAL tout le temps, regard sur la KB.','Un des meilleurs exos full body qui existe.']},
+
+  /* ============ PROPHYLAXIE — Nordic Hamstring (Petersen 2011) ============
+   * RCT princeps : -70% d'incidence de claquage ischios chez les footeurs
+   * danois avec 3×10 reps eccentriques, 2×/sem. Méta-analyses confirment
+   * (van Dyk 2019 : -51% blessures ischios sur 14 RCT). Coûte rien, prend
+   * 5 min, protège un muscle qu'on déchire toujours au pire moment. */
+  {id:'nordic',n:'Nordic Hamstring',z:['legs','core'],gear:['pdc'],needs:['ancrage'],pain:['dos'],unilateral:false,
+   desc:'Excentrique d\'ischios à genoux, pieds bloqués — prévention claquages ischios.',
+   how:"À genoux sur un tapis, chevilles bloquées sous quelque chose (banc, partenaire, machine). Mains croisées sur la poitrine. Descends LENTEMENT le buste vers l'avant en gardant le corps gainé (3-5s par rep) en résistant au maximum avec les ischios. Rattrape avec les mains au dernier moment, repousse avec les bras pour revenir.",
+   tips:['Phase eccentrique LENTE — c\'est elle qui protège, pas la remontée.','Démarre par 2-3 reps même si tu peux faire plus : courbatures massives sinon.','Progression : amplitude (descendre plus bas) avant le nombre de reps.','3×6-10 reps, 2×/sem, jamais le jour d\'une grosse séance jambes.']},
 ];
 
 const EX_BY_ID = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -645,6 +657,38 @@ function supportsWeight(exoId) {
   const e = EX_BY_ID[exoId];
   if (!e || e.timed) return false;
   return e.gear.some(g => g === 'barre' || g === 'halteres' || g === 'kettlebell' || g === 'machine');
+}
+
+// Pour les exos avec haltères : indique si la charge prescrite s'applique à
+// 1 haltère (tenu à 2 mains, ou posé sur les hanches), ou 2 haltères (un par
+// main, donc charge totale = 2× la valeur affichée).
+//
+// Pourquoi pas une propriété directement sur chaque exo ? Pour garder le tableau
+// EX lisible. Le défaut implicite est 2 (cas le plus courant), seuls les exos
+// "à 1 haltère" sont listés ici.
+//
+// Le kg affiché reste toujours "par haltère" — cette annotation ne change pas
+// la valeur, elle clarifie juste son interprétation pour l'utilisateur.
+const DUMBBELL_HANDS_ONE = new Set([
+  'goblet',     // haltère tenu à 2 mains contre la poitrine
+  'triceps',    // extension overhead à 2 mains
+  'hipthrust',  // posé sur le pli des hanches
+  'gluteb',     // posé sur le pli des hanches
+  'rustwist',   // tenu à 2 mains devant le buste
+]);
+
+function dbHandsFor(exoId) {
+  const e = EX_BY_ID[exoId];
+  if (!e || !e.gear.includes('halteres')) return null;
+  return DUMBBELL_HANDS_ONE.has(exoId) ? 1 : 2;
+}
+
+// Petit libellé affiché à côté du poids pour préciser 1 vs 2 haltères.
+// Retourne '' si l'exo n'utilise pas d'haltères (cas barbell/machine pur).
+function dumbbellNote(exoId) {
+  const h = dbHandsFor(exoId);
+  if (h == null) return '';
+  return h === 1 ? '1 haltère (à 2 mains)' : '2 haltères (un par main)';
 }
 
 // Cap a suggested weight by the user's declared max (per-exo, based on gear).
@@ -765,7 +809,7 @@ function activateYouTubePlaceholder() {
 
 /* =================== VIEW ROUTING =================== */
 const ALL_VIEWS = ['viewAuth','viewEnroll2FA','viewConsent','viewOnboarding','viewHome','viewSession','viewQuestion',
-                   'viewHistory','viewTimer','viewTap','viewGuide','viewExerciseDetail'];
+                   'viewHistory','viewTimer','viewTap','viewGuide','viewExerciseDetail','viewInsights'];
 
 // Map view id → page title fragment. Used to keep document.title in sync
 // with the current screen so screen-reader users hear the new context and
@@ -976,6 +1020,13 @@ document.getElementById('authSubmit').addEventListener('click', async () => {
     currentUserIsAdmin = !!resp.isAdmin;
     setAdminLinkVisible(currentUserIsAdmin);
     document.getElementById('authPass').value = '';
+    // Audit L-05 : purger le cache SW à chaque login frais — pas seulement
+    // au logout. Évite qu'un user qui se reconnecte sur un device partagé
+    // voie brièvement les données du compte précédent depuis le cache SW
+    // tant que le réseau n'a pas répondu.
+    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({ type: 'clear-data-cache' });
+    }
     await refreshCSRF();
     // 2FA is mandatory by default: if the server says we haven't enrolled
     // yet, every data call will 403 until we do. Send the user straight
@@ -1518,7 +1569,9 @@ async function flushSave() {
 
 window.addEventListener('pagehide', () => {
   if (savePending && currentUserEmail) {
-    const t = getCookie('coach_csrf');
+    // Audit M-03 : sur HTTPS le cookie est nommé __Host-coach_csrf
+    // (durcissement préfixe). On lit les deux noms en fallback.
+    const t = getCookie('__Host-coach_csrf') || getCookie('coach_csrf');
     const blob = new Blob([JSON.stringify({data: S})], {type:'application/json'});
     try {
       fetch('/api/data', {
@@ -1576,6 +1629,54 @@ function openOnboarding() {
     setChips('onbAllergies', S.profile.allergies || [], 'pain');
   }
 }
+// Liste des zones douleurs / courbatures partagée entre :
+//   - bannière soreness (home),
+//   - questionnaire de bilan (qPain),
+//   - onboarding (onbPain).
+// On garde des clés ASCII pour la compat data (history.pains[] stocke ces clés).
+// Élargissement v2 : 15 zones (vs 6 avant) pour capter aussi les douleurs
+// musculaires (ischio, mollet, quadri, fessier) et axiales (nuque, lombaires,
+// abdo) en plus des articulations.
+const SORENESS_PARTS = [
+  { key: 'nuque',     label: 'Nuque / cou' },
+  { key: 'epaule',    label: 'Épaules' },
+  { key: 'coude',     label: 'Coudes' },
+  { key: 'poignet',   label: 'Poignets' },
+  { key: 'avantbras', label: 'Avant-bras' },
+  { key: 'dos',       label: 'Haut du dos' },
+  { key: 'lombaires', label: 'Lombaires' },
+  { key: 'abdo',      label: 'Abdos' },
+  { key: 'hanche',    label: 'Hanches' },
+  { key: 'fessier',   label: 'Fessiers' },
+  { key: 'quadri',    label: 'Quadriceps' },
+  { key: 'ischio',    label: 'Ischios' },
+  { key: 'genou',     label: 'Genoux' },
+  { key: 'mollet',    label: 'Mollets' },
+  { key: 'cheville',  label: 'Chevilles' },
+];
+
+// Hydrate les conteneurs de zones douleurs depuis SORENESS_PARTS (source unique).
+// onbPain et qPain ont des <button> statiques dans le HTML qu'on remplace ici
+// pour que les nouveaux ajouts à la liste apparaissent automatiquement.
+function hydratePainChips() {
+  const list = SORENESS_PARTS;
+  if (!list) return;
+  ['onbPain', 'qPain'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = list.map(p =>
+      `<button type="button" class="chip" data-pain="${p.key}">${p.label}</button>`
+    ).join('');
+    // Re-wire (idempotent guard est sur dataset.wired).
+    if (el.dataset.wired === '1') {
+      // wireChips déjà appelé : recâble manuellement les nouveaux chips.
+      el.querySelectorAll('.chip').forEach(c => {
+        c.addEventListener('click', () => c.classList.toggle('on'));
+      });
+    }
+  });
+}
+hydratePainChips();
 ['onbGoals','onbGear','onbPain','onbAllergies'].forEach(wireChips);
 
 /* =================== SUIVI CORPOREL ===================
@@ -1595,6 +1696,15 @@ function ensureBodyState() {
   if (!Array.isArray(S.body.weights)) S.body.weights = [];
   if (!Array.isArray(S.body.measurements)) S.body.measurements = [];
   if (!Array.isArray(S.body.physio)) S.body.physio = [];
+  // Extensions science (niveau 5) — voir science.js pour la justification :
+  //   hooper    : [{date, sleep, stress, mood, soreness, fatigue, raw, ready}]
+  //   lifestyle : [{date, steps, lastCaffeineH, morningLight}]
+  //   pvt       : [{date, meanMs, medianMs, lapses, falseStarts, n}]
+  //   intentions: [{date, trigger, action, status: 'pending'|'done'|'missed'}]
+  if (!Array.isArray(S.body.hooper)) S.body.hooper = [];
+  if (!Array.isArray(S.body.lifestyle)) S.body.lifestyle = [];
+  if (!Array.isArray(S.body.pvt)) S.body.pvt = [];
+  if (!Array.isArray(S.body.intentions)) S.body.intentions = [];
 }
 
 // movingAverage — fenêtre glissante de N entrées. Renvoie un array de
@@ -1672,8 +1782,33 @@ function renderBodySparkline() {
     }
     const d30 = deltaSince(30), d90 = deltaSince(90);
     const fmtD = d => d == null ? '—' : (d > 0 ? '+' + d : '' + d) + ' kg';
+    // Trend Hall 2011 : régression linéaire 6 semaines → kcal/jour de déficit
+    // ou d'excédent (1 kg ≈ 7700 kcal). Plus fiable que le delta brut à 30j
+    // car filtre le bruit eau/glycogène.
+    let trendHtml = '';
+    if (window.Science) {
+      const trend = window.Science.bodyWeightTrend(ws, { weeks: 6 });
+      if (trend && Math.abs(trend.slopeKgPerWeek) > 0.05 && trend.r2 > 0.2) {
+        const dir = trend.slopeKgPerWeek > 0 ? 'prise' : 'perte';
+        const sign = trend.kcalPerDay > 0 ? '+' : '';
+        trendHtml = `<br><span class="mut" style="font-size:11px">
+          📈 Trend 6 sem (Hall 2011) : ${dir} de ${Math.abs(trend.slopeKgPerWeek).toFixed(2)} kg/sem
+          ≈ ${sign}${trend.kcalPerDay} kcal/jour (R²=${trend.r2})
+        </span>`;
+      }
+      // Cibles protéiques Schoenfeld 2018 (0.4 g/kg/repas × 4 = 1.6 g/kg/j)
+      const lastKg = +lastEntry.kg;
+      const meals = (S.profile && +S.profile.meals) || 4;
+      const prot = window.Science.proteinTargets(lastKg, meals);
+      if (prot) {
+        trendHtml += `<br><span class="mut" style="font-size:11px">
+          🥩 Cible protéines (Schoenfeld 2018) : <strong>${prot.perDayMin}-${prot.perDayMax} g/jour</strong>
+          · ${prot.perMealOptimal} g/repas (sur ${prot.mealsPerDay} repas)
+        </span>`;
+      }
+    }
     last.innerHTML = `Dernière pesée : <strong>${(+lastEntry.kg).toFixed(1)} kg</strong> le ${escapeHtml(lastTxt)}.
-      30j : ${fmtD(d30)} · 90j : ${fmtD(d90)}.`;
+      30j : ${fmtD(d30)} · 90j : ${fmtD(d90)}.${trendHtml}`;
   }
 }
 
@@ -3789,6 +3924,10 @@ function paintHomeSkeleton() {
 function openHome() {
   if (!S.profile) { openOnboarding(); return; }
   show('viewHome');
+  // Reset du "Afficher quand même" pour que la bannière de séance
+  // d'aujourd'hui faite revienne à chaque retour sur la home.
+  const _nsc = document.getElementById('nextSessionCard');
+  if (_nsc) delete _nsc.dataset.showNextAnyway;
 
   // 1) Hero ring — mascot pastille + niveau au centre + XP en bas. La
   // progression utilise stroke-dashoffset sur le SVG circle. Circumference
@@ -3833,8 +3972,9 @@ function openHome() {
   document.getElementById('qForme').textContent = Math.round(S.formScore);
   document.getElementById('qPRs').textContent = countPRs(S.history);
 
-  // 3) Badges.
+  // 3) Badges + science card (Hooper / lifestyle / HRV / asymétries / etc.)
   renderBadges();
+  try { renderScienceCard(); } catch (e) { console.warn('renderScienceCard:', e); }
 
   // 4) Next session (with swap buttons).
   // Defensive re-validation: if the stored session contains any exo the user
@@ -4563,14 +4703,7 @@ function renderCalendarHeatmap() {
 // answer is stored on profile.painToday (overwriting the onboarding default
 // for this session only) and a profile.sorenessCheckedAt date stamp keeps the
 // banner from re-appearing the same day.
-const SORENESS_PARTS = [
-  { key: 'genou',   label: 'Genoux' },
-  { key: 'dos',     label: 'Dos' },
-  { key: 'epaule',  label: 'Épaules' },
-  { key: 'coude',   label: 'Coudes' },
-  { key: 'poignet', label: 'Poignets' },
-  { key: 'cheville',label: 'Chevilles' },
-];
+// SORENESS_PARTS est déclaré en haut du fichier (source unique de zones).
 function renderSorenessCheck() {
   const card = document.getElementById('sorenessCard');
   if (!card) return;
@@ -4609,6 +4742,826 @@ function renderSorenessCheck() {
     queueSave();
     card.classList.add('hide');
   };
+}
+
+/* =============================================================
+ * Science card (niveau 5) — check-in matinal + alertes intégrées.
+ * Une seule card sur la home qui agrège :
+ *   - Hooper wellness (5 items)             → S.body.hooper
+ *   - Lifestyle (pas, café, lumière matin)  → S.body.lifestyle
+ *   - Readiness composite (HRV + Hooper)    → calcul live
+ *   - Bannière désentraînement (Mujika)     → si gap >7j depuis dernière séance
+ *   - Asymétries G/D (Bishop)               → si différence >10% sur 6 sem
+ *   - PVT hebdo (Dinges)                    → bouton si rien depuis 7j
+ *   - Intentions (Gollwitzer)               → rappels si statut pending
+ * ============================================================= */
+function renderScienceCard() {
+  const card = document.getElementById('scienceCard');
+  const body = document.getElementById('scienceCardBody');
+  if (!card || !body || !window.Science) return;
+  ensureBodyState();
+  const S2 = window.Science;
+  const today = new Date().toISOString().slice(0, 10);
+
+  // --- 1. Détection désentraînement -------------------------------------
+  const gap = S2.lastTrainingGapDays(S.history);
+  const detrain = gap != null ? S2.detrainingProjection(gap) : null;
+
+  // --- 2. Readiness composite (HRV Plews + Hooper) ----------------------
+  const hrv = S.body.physio && S.body.physio.length > 0
+    ? S2.hrvReadiness(S.body.physio) : null;
+  const todayHooper = (S.body.hooper || []).find(h => h.date === today);
+  const hoop = todayHooper ? S2.hooperReadiness(todayHooper) : null;
+  let composite = null;
+  if (hrv || hoop) {
+    const parts = [];
+    if (hrv) parts.push(hrv.ready);
+    if (hoop) parts.push(hoop.ready);
+    composite = Math.round(parts.reduce((a, v) => a + v, 0) / parts.length);
+  }
+
+  // --- 3. Asymétries G/D (Bishop) ---------------------------------------
+  const asyms = S2.asymmetryReport(S.history)
+    .filter(a => a.label === 'notable' || a.label === 'severe').slice(0, 3);
+
+  // --- 4. PVT — recommandé si rien depuis 7 jours -----------------------
+  const lastPvt = S.body.pvt && S.body.pvt.length > 0
+    ? S.body.pvt.reduce((m, p) =>
+        Date.parse(p.date) > Date.parse(m.date) ? p : m, S.body.pvt[0])
+    : null;
+  const pvtAgeDays = lastPvt
+    ? Math.floor((Date.now() - Date.parse(lastPvt.date)) / 86400000) : 999;
+
+  // --- 5. Intentions en cours -------------------------------------------
+  const pendingIntentions = (S.body.intentions || [])
+    .filter(i => i.status === 'pending').slice(0, 3);
+
+  // --- Render -----------------------------------------------------------
+  const blocks = [];
+
+  // 1. Bandeau désentraînement (priorité : tout en haut s'il existe)
+  if (detrain && detrain.daysOff >= 7) {
+    blocks.push(`
+      <div class="sci-detrain ${detrain.severity}">
+        <strong>⏸ Pause de ${detrain.daysOff} jours détectée</strong><br>
+        <span style="opacity:.92">
+          Selon Mujika (2000), tu as probablement perdu ~${detrain.lossPct}% de 1RM.
+          Ta prochaine séance proposera des charges réduites de ${detrain.suggestedLoadReductionPct}%
+          — remontée progressive sur 2-3 semaines.
+        </span>
+      </div>
+    `);
+  }
+
+  // 2. Readiness composite (HRV Plews + Hooper)
+  if (composite != null) {
+    const cls = composite >= 70 ? 'good'
+              : composite >= 50 ? 'normal'
+              : composite >= 30 ? 'caution' : 'low';
+    const lab = composite >= 70 ? 'Prêt à pousser'
+              : composite >= 50 ? 'Normal'
+              : composite >= 30 ? 'Réduire l\'intensité' : 'Repos conseillé';
+    const detailParts = [];
+    if (hrv) detailParts.push(`HRV ${hrv.ready}${hrv.label === 'low' ? ' (chute)' : ''}`);
+    if (hoop) detailParts.push(`Hooper ${hoop.ready}`);
+    blocks.push(`
+      <div class="sci-section">
+        <div class="sci-section-title">
+          <span>⚡ Readiness</span><span class="pill">composite</span>
+        </div>
+        <div class="sci-readiness">
+          <div class="sci-readiness-disc ${cls}">${composite}</div>
+          <div>
+            <div class="sci-readiness-label">${lab}</div>
+            <div class="sci-readiness-detail">${detailParts.join(' · ') || 'baseline en construction'}</div>
+          </div>
+        </div>
+      </div>
+    `);
+  }
+
+  // 3. Hooper — questionnaire si pas encore rempli aujourd'hui
+  if (!todayHooper) {
+    const items = [
+      ['sleep', 'Qualité de sommeil'],
+      ['stress', 'Niveau de stress'],
+      ['mood', 'Humeur'],
+      ['soreness', 'Courbatures'],
+      ['fatigue', 'Fatigue générale'],
+    ];
+    // NB : pas de `oninput=` ni `onclick=` inline — bloqués par la CSP
+    // (script-src 'self' sans 'unsafe-inline'). Wiring fait plus bas via
+    // addEventListener après injection du HTML.
+    blocks.push(`
+      <details class="sci-collapsible" data-sci-block="hooper-form">
+        <summary>📋 Check-in Hooper (30s, 5 questions 1-7)</summary>
+        <div class="sci-collapsible-body">
+          <div class="sci-form-row">
+            ${items.map(([k, lab]) => `
+              <label>
+                <span>${lab} <span class="mut" style="font-size:11px">(1=excellent, 7=mauvais)</span></span>
+                <input type="range" min="1" max="7" step="1" value="4" id="hoop_${k}" data-sci-slider="${k}">
+                <span class="sci-slider-value" id="hoop_${k}_v">4</span>
+              </label>
+            `).join('')}
+          </div>
+          <button type="button" class="ok w-full" data-sci-action="save-hooper" style="margin-top:10px">
+            Enregistrer
+          </button>
+        </div>
+      </details>
+    `);
+  } else {
+    blocks.push(`
+      <div class="sci-done">
+        ✓ Hooper du jour enregistré · index <strong>${todayHooper.raw}/35</strong>
+        ${todayHooper.raw >= 22 ? ' (surveillance recommandée)' : ''}
+        <span class="lnk" data-sci-action="reset-hooper">refaire</span>
+      </div>
+    `);
+  }
+
+  // 4. Lifestyle (NEAT + caféine + lumière)
+  // NEAT = "Non-Exercise Activity Thermogenesis" : tout ce que tu dépenses en
+  // calories HORS sport intentionnel (marcher, rester debout, gestes du
+  // quotidien). Levine 2005 a montré que c'est le principal facteur de
+  // variance de poids long terme, plus que le sport lui-même. Compter ses
+  // pas est le proxy le plus simple — pas besoin d'un wearable, juste la
+  // valeur du soir affichée par Health/Google Fit/montre/podomètre.
+  const todayLs = (S.body.lifestyle || []).find(l => l.date === today);
+  if (!todayLs) {
+    blocks.push(`
+      <details class="sci-collapsible" data-sci-block="lifestyle-form">
+        <summary>🌅 Vie quotidienne (NEAT + caféine + lumière)</summary>
+        <div class="sci-collapsible-body">
+          <div class="sci-form-row">
+            <label>
+              <span>Pas comptabilisés hier
+                <span class="mut" style="font-size:11px">
+                  (NEAT = activité hors sport, principal moteur du poids long terme — Levine 2005)
+                </span>
+              </span>
+              <input type="number" id="ls_steps" min="0" max="50000" step="100" placeholder="ex: 8500 (regarde ton tél / montre)">
+            </label>
+            <label>
+              <span>Heures entre dernier café et coucher hier
+                <span class="mut" style="font-size:11px">(Drake 2013, idéal &gt;6h)</span>
+              </span>
+              <input type="number" id="ls_caffeine" min="0" max="24" step="0.5" placeholder="ex: 8 (dernier café à 14h, coucher 22h = 8)">
+            </label>
+            <label class="sci-check-label">
+              <input type="checkbox" id="ls_light">
+              <span>10 min de lumière vive dehors avant 10h ce matin
+                <span class="mut" style="font-size:11px">(alignement circadien — Wright 2013)</span>
+              </span>
+            </label>
+          </div>
+          <button type="button" class="ok w-full" data-sci-action="save-lifestyle" style="margin-top:10px">
+            Enregistrer
+          </button>
+        </div>
+      </details>
+    `);
+  } else {
+    const bits = [];
+    if (todayLs.steps != null) bits.push(`<strong>${todayLs.steps}</strong> pas`);
+    if (todayLs.lastCaffeineH != null) bits.push(`café <strong>${todayLs.lastCaffeineH}h</strong> avant coucher`);
+    if (todayLs.morningLight) bits.push('lumière matin ✓');
+    blocks.push(`
+      <div class="sci-done">
+        ✓ Vie quotidienne du jour : ${bits.join(' · ')}
+      </div>
+    `);
+  }
+
+  // 5. Asymétries (Bishop 2018) — affiché en alerte si présent
+  if (asyms.length > 0) {
+    blocks.push(`
+      <div class="sci-warning">
+        <strong>⚖️ Asymétrie détectée</strong>
+        <span class="mut" style="font-size:11px"> · Bishop 2018</span>
+        ${asyms.map(a => {
+          const exo = (typeof EX_BY_ID !== 'undefined') ? EX_BY_ID[a.exoId] : null;
+          const name = exo ? exo.n : a.exoId;
+          return `<div class="sci-warning-item">
+            <strong>${escapeHtml(name)}</strong> — côté ${a.weaker === 'L' ? 'gauche' : 'droit'}
+            plus faible de ${a.diffPct}%
+            (${Math.min(a.nL, a.nR)} séries / côté)
+            ${a.label === 'severe' ? '<span class="sev">[sévère]</span>' : ''}
+          </div>`;
+        }).join('')}
+        <p class="mut" style="font-size:11px;margin:6px 0 0">
+          &gt;10% = séries supplémentaires côté faible recommandées.
+        </p>
+      </div>
+    `);
+  }
+
+  // 6. PVT — recommandé si rien depuis 7 jours
+  if (pvtAgeDays >= 7) {
+    blocks.push(`
+      <button class="sci-pvt-btn" data-sci-action="open-pvt">
+        🧠 Test de vigilance PVT (90s)
+        <div class="mut" style="font-size:11px;margin-top:4px">
+          ${lastPvt ? `Dernier il y a ${pvtAgeDays}j` : 'Première fois'}
+          · Dinges 1985, recommandé 1×/semaine
+        </div>
+      </button>
+    `);
+  } else if (lastPvt) {
+    blocks.push(`
+      <div class="sci-done">
+        ✓ Dernier PVT il y a ${pvtAgeDays}j : ${lastPvt.meanMs} ms moyen, ${lastPvt.lapses} lapses
+      </div>
+    `);
+  }
+
+  // 7. Intentions en cours (Gollwitzer 1999)
+  if (pendingIntentions.length > 0) {
+    blocks.push(`
+      <div class="sci-section">
+        <div class="sci-section-title">
+          <span>🎯 Intentions en cours</span><span class="pill">Gollwitzer</span>
+        </div>
+        ${pendingIntentions.map((it, i) => `
+          <div class="sci-intention">
+            <span class="sci-intention-text">
+              <em>Si</em> ${escapeHtml(it.trigger)} <em>alors</em> ${escapeHtml(it.action)}
+            </span>
+            <button class="ok" style="padding:4px 10px;font-size:11px"
+                    data-sci-action="mark-intention" data-idx="${i}" data-status="done">✓ fait</button>
+            <button class="sec" style="padding:4px 8px;font-size:11px"
+                    data-sci-action="mark-intention" data-idx="${i}" data-status="missed">✗</button>
+          </div>
+        `).join('')}
+      </div>
+    `);
+  }
+
+  // 8. Nouvelle intention — collapsible toujours présent
+  blocks.push(`
+    <details class="sci-collapsible" data-sci-block="intention-form">
+      <summary>+ Nouvelle intention d'implémentation</summary>
+      <div class="sci-collapsible-body">
+        <div class="sci-form-row">
+          <input type="text" id="int_trigger" placeholder="Si... (ex: je rentre du boulot mardi soir)" maxlength="120">
+          <input type="text" id="int_action" placeholder="alors... (ex: je mets ma tenue avant de m'asseoir)" maxlength="120">
+        </div>
+        <button type="button" class="ok w-full" data-sci-action="save-intention" style="margin-top:8px">
+          Enregistrer
+        </button>
+        <p class="mut" style="font-size:11px;margin:8px 0 0">
+          Format Gollwitzer 1999 — d≈0.65 sur la formation d'habitudes.
+        </p>
+      </div>
+    </details>
+  `);
+
+  // 9. Lien vers la vue Insights (corrélations long terme)
+  blocks.push(`
+    <button class="sci-insights-btn" data-sci-action="open-insights">
+      📊 Voir mes corrélations long terme (café/sommeil, NEAT, body comp)
+    </button>
+  `);
+
+  body.innerHTML = blocks.join('');
+
+  // ============================================================
+  // Wiring des handlers (CSP-safe — pas d'inline onclick/oninput)
+  // ============================================================
+  // 1) Sliders Hooper : live update du span associé.
+  body.querySelectorAll('input[data-sci-slider]').forEach((sl) => {
+    const key = sl.dataset.sciSlider;
+    const out = body.querySelector('#hoop_' + key + '_v');
+    if (!out) return;
+    const sync = () => { out.textContent = sl.value; };
+    sl.addEventListener('input', sync);
+    sl.addEventListener('change', sync);
+  });
+  // 2) Actions sur boutons / liens via data-sci-action.
+  body.querySelectorAll('[data-sci-action]').forEach((el) => {
+    const action = el.dataset.sciAction;
+    el.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      switch (action) {
+        case 'save-hooper':    saveHooper(); break;
+        case 'save-lifestyle': saveLifestyle(); break;
+        case 'save-intention': saveIntention(); break;
+        case 'reset-hooper':   resetHooperToday(); break;
+        case 'open-pvt':       openPvt(); break;
+        case 'open-insights':  openInsights(); break;
+        case 'mark-intention': {
+          const idx = +el.dataset.idx;
+          const status = el.dataset.status;
+          markIntention(idx, status);
+          break;
+        }
+      }
+    });
+  });
+}
+
+// Helper exposé sur window pour le bouton "refaire" du Hooper du jour.
+function resetHooperToday() {
+  ensureBodyState();
+  const today = new Date().toISOString().slice(0, 10);
+  S.body.hooper = S.body.hooper.filter(h => h.date !== today);
+  queueSave();
+  renderScienceCard();
+}
+
+// Persiste un Hooper du jour à partir du formulaire ouvert dans la card.
+function saveHooper() {
+  ensureBodyState();
+  const today = new Date().toISOString().slice(0, 10);
+  const entry = { date: today };
+  for (const k of ['sleep', 'stress', 'mood', 'soreness', 'fatigue']) {
+    entry[k] = +document.getElementById('hoop_' + k).value;
+  }
+  if (window.Science) {
+    const h = window.Science.hooperIndex(entry);
+    if (h) entry.raw = h.raw;
+    const r = window.Science.hooperReadiness(entry);
+    if (r) entry.ready = r.ready;
+  }
+  // Remplace si déjà présent
+  const idx = S.body.hooper.findIndex(h => h.date === today);
+  if (idx >= 0) S.body.hooper[idx] = entry; else S.body.hooper.push(entry);
+  queueSave();
+  renderScienceCard();
+}
+
+// Persiste les inputs lifestyle du jour
+function saveLifestyle() {
+  ensureBodyState();
+  const today = new Date().toISOString().slice(0, 10);
+  const steps = document.getElementById('ls_steps').value;
+  const caf = document.getElementById('ls_caffeine').value;
+  const light = document.getElementById('ls_light').checked;
+  const entry = {
+    date: today,
+    steps: steps !== '' ? +steps : null,
+    lastCaffeineH: caf !== '' ? +caf : null,
+    morningLight: !!light,
+  };
+  const idx = S.body.lifestyle.findIndex(l => l.date === today);
+  if (idx >= 0) S.body.lifestyle[idx] = entry; else S.body.lifestyle.push(entry);
+  queueSave();
+  renderScienceCard();
+}
+
+// Crée une nouvelle intention d'implémentation
+function saveIntention() {
+  ensureBodyState();
+  const trigger = (document.getElementById('int_trigger').value || '').trim().slice(0, 120);
+  const action = (document.getElementById('int_action').value || '').trim().slice(0, 120);
+  if (!trigger || !action) return;
+  S.body.intentions.push({
+    date: new Date().toISOString(), trigger, action, status: 'pending',
+  });
+  queueSave();
+  renderScienceCard();
+}
+
+// Marque une intention comme faite/manquée
+function markIntention(pendingIdx, status) {
+  ensureBodyState();
+  const pending = S.body.intentions.filter(i => i.status === 'pending');
+  const target = pending[pendingIdx];
+  if (!target) return;
+  const real = S.body.intentions.indexOf(target);
+  S.body.intentions[real].status = status;
+  queueSave();
+  renderScienceCard();
+}
+
+/* =============================================================
+ * PVT — Psychomotor Vigilance Task (Dinges 1985, Basner 2011 short)
+ * =============================================================
+ * Version courte (90s, 10-15 stimuli avec ISI 3-8s).
+ * L'utilisateur tape dès qu'un cercle rouge apparaît à l'écran. On
+ * mesure le temps de réaction par stimulus, et on calcule lapses
+ * (RT>500ms), false starts (clic avant stimulus), RT moyen + median.
+ * ============================================================= */
+function openPvt() {
+  if (!window.Science) { showToast && showToast('Module science manquant'); return; }
+  ensureBodyState();
+  // Modal full-screen avec un seul gros bouton tap
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#111;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:system-ui;text-align:center;padding:20px';
+  overlay.innerHTML = `
+    <div id="pvtMsg" style="font-size:22px;font-weight:600;margin-bottom:30px">
+      Test PVT — vigilance psychomotrice (Dinges)
+    </div>
+    <div id="pvtTarget" style="width:140px;height:140px;border-radius:50%;background:#333;margin-bottom:30px;transition:background 80ms"></div>
+    <div id="pvtHint" style="opacity:.7;font-size:14px;max-width:320px;line-height:1.5">
+      Quand le cercle devient ROUGE, tape-le aussi vite que possible.<br>
+      Durée : ~90s, 10-12 stimuli aléatoires.
+    </div>
+    <button id="pvtStart" style="margin-top:30px;padding:16px 32px;font-size:18px;background:#2d9b83;color:#fff;border:none;border-radius:10px">
+      Démarrer
+    </button>
+    <button id="pvtAbort" style="margin-top:14px;font-size:13px;background:none;color:#888;border:none">
+      Annuler
+    </button>
+  `;
+  document.body.appendChild(overlay);
+  const target = overlay.querySelector('#pvtTarget');
+  const msg = overlay.querySelector('#pvtMsg');
+  const hint = overlay.querySelector('#pvtHint');
+  const start = overlay.querySelector('#pvtStart');
+  const abort = overlay.querySelector('#pvtAbort');
+  const reactions = [];
+  let stimT = null, scheduled = null, stopFlag = false, idx = 0;
+  const N = 12;
+  function cleanup() { try { document.body.removeChild(overlay); } catch (_) {} }
+  abort.onclick = () => { stopFlag = true; clearTimeout(scheduled); cleanup(); };
+  target.style.cursor = 'pointer';
+
+  function scheduleNext() {
+    if (stopFlag || idx >= N) return finish();
+    const isi = 2000 + Math.random() * 6000;  // 2-8s
+    msg.textContent = `Stimulus ${idx + 1}/${N} — attends…`;
+    target.style.background = '#333';
+    scheduled = setTimeout(() => {
+      if (stopFlag) return;
+      stimT = performance.now();
+      target.style.background = '#e74c3c';
+      msg.textContent = 'TAP !';
+    }, isi);
+  }
+  target.onclick = () => {
+    if (stopFlag) return;
+    if (stimT == null) {
+      reactions.push(50);  // false start (<100ms par def)
+      msg.textContent = 'Trop tôt ! Attends le rouge.';
+      return;
+    }
+    const rt = performance.now() - stimT;
+    reactions.push(Math.round(rt));
+    stimT = null;
+    idx++;
+    target.style.background = '#333';
+    msg.textContent = `${Math.round(rt)} ms`;
+    setTimeout(scheduleNext, 800);
+  };
+  function finish() {
+    const result = window.Science.pvtAnalyze(reactions);
+    if (result) {
+      const entry = Object.assign({ date: new Date().toISOString() }, result);
+      S.body.pvt.push(entry);
+      queueSave();
+    }
+    msg.textContent = 'Terminé !';
+    hint.innerHTML = `
+      <strong>RT moyen :</strong> ${result.meanMs || '—'} ms<br>
+      <strong>Lapses (&gt;500ms) :</strong> ${result.lapses}<br>
+      <strong>Faux départs :</strong> ${result.falseStarts}<br>
+      <small style="opacity:.6">N=${result.n} stimuli valides</small>
+    `;
+    start.textContent = 'Fermer';
+    start.onclick = cleanup;
+    start.style.display = 'block';
+    target.onclick = null;
+    target.style.background = '#2d9b83';
+  }
+  start.onclick = () => {
+    start.style.display = 'none';
+    abort.style.display = 'none';
+    hint.textContent = 'Concentre-toi sur le cercle.';
+    setTimeout(scheduleNext, 1000);
+  };
+}
+
+/* =============================================================
+ * Vue Insights — corrélations long terme
+ * =============================================================
+ * Affiche les analyses qui n'ont du sens qu'avec ≥2 sem de données :
+ *   - Trend NEAT (pas) : moyenne 7j vs précédent + plot
+ *   - Corrélation café→sommeil : Pearson entre delai dernier café
+ *     et qualité sommeil le lendemain (Drake 2013)
+ *   - Lumière matinale × sommeil : ratio sommeil les jours light=true vs false
+ *   - Trend body weight : pente Hall + intervalle de confiance R²
+ *   - HRV : moyenne 7j vs baseline + variance individuelle (Plews)
+ *   - Historique PVT : courbe RT moyen + lapses
+ *   - Adhérence intentions : ratio done/total sur 30j (Gollwitzer)
+ *
+ * Cette vue est passive (read-only). Tous les inputs/edits restent
+ * sur la science card de la home pour ne pas dupliquer les flows.
+ * ============================================================= */
+function openInsights() {
+  show('viewInsights');
+  renderInsights();
+  // Wire le bouton "Retour" — CSP-safe.
+  const back = document.getElementById('insightsBackBtn');
+  if (back && !back._sciWired) {
+    back._sciWired = true;
+    back.addEventListener('click', (e) => { e.preventDefault(); openHome(); });
+  }
+}
+
+function renderInsights() {
+  const box = document.getElementById('insightsBody');
+  if (!box || !window.Science) return;
+  ensureBodyState();
+  const Sci = window.Science;
+  const cards = [];
+
+  // --- 1. NEAT (Levine 2005) ----------------------------------------
+  const neat = Sci.neatTrend(S.body.lifestyle);
+  if (neat) {
+    const arrow = neat.delta == null ? '' : (neat.delta > 0 ? '↑' : neat.delta < 0 ? '↓' : '→');
+    const sign = neat.delta > 0 ? '+' : '';
+    cards.push(`
+      <div class="card">
+        <h2>🚶 Activité quotidienne (NEAT)</h2>
+        <p class="mut" style="font-size:12px;margin:-4px 0 12px">
+          Levine 2005 — la dépense hors sport explique plus de variance dans le poids long terme que l'exercice lui-même.
+        </p>
+        <div style="display:flex;gap:20px;align-items:baseline">
+          <div>
+            <div class="stat">${neat.avg7.toLocaleString('fr-FR')}</div>
+            <div class="mut" style="font-size:11px">pas/jour, moyenne 7j</div>
+          </div>
+          ${neat.delta != null ? `
+            <div>
+              <div style="font-size:18px;font-weight:600">${arrow} ${sign}${neat.delta.toLocaleString('fr-FR')}</div>
+              <div class="mut" style="font-size:11px">vs semaine précédente</div>
+            </div>
+          ` : ''}
+        </div>
+        <p class="mut" style="font-size:11px;margin-top:10px">
+          ${neat.avg7 < 5000 ? '🪑 Sédentaire — viser &gt;7500 pas/jour pour effet cardiovasculaire mesurable (Tudor-Locke 2011).'
+            : neat.avg7 < 7500 ? '⚖️ Faiblement actif — viser &gt;7500 pas pour bénéfices santé.'
+            : neat.avg7 < 10000 ? '✓ Actif — niveau santé général atteint.'
+            : '🔥 Très actif — bénéfices maximaux.'}
+        </p>
+      </div>
+    `);
+  } else {
+    cards.push(`
+      <div class="card">
+        <h2>🚶 Activité quotidienne (NEAT)</h2>
+        <p class="mut">Logge tes pas quotidiens depuis la home pour voir le trend.</p>
+      </div>
+    `);
+  }
+
+  // --- 2. Caféine × sommeil (Drake 2013) ----------------------------
+  const caf = Sci.caffeineSleepCorrelation(S.body.lifestyle, S.body.physio);
+  cards.push(`
+    <div class="card">
+      <h2>☕ Caféine vs qualité du sommeil</h2>
+      <p class="mut" style="font-size:12px;margin:-4px 0 12px">
+        Drake 2013 — caféine &lt;6h avant coucher détériore objectivement la qualité du sommeil mesurée.
+      </p>
+      ${caf && caf.corr != null ? `
+        <div style="display:flex;gap:20px;align-items:baseline">
+          <div>
+            <div class="stat">${(caf.corr > 0 ? '+' : '') + caf.corr.toFixed(2)}</div>
+            <div class="mut" style="font-size:11px">corrélation Pearson</div>
+          </div>
+          <div>
+            <div style="font-size:14px;font-weight:600">
+              ${Math.abs(caf.corr) < 0.2 ? 'Pas d\'effet clair'
+                : caf.corr > 0.4 ? 'Effet fort (plus tard = mieux dormi)'
+                : caf.corr > 0 ? 'Effet modéré dans la direction attendue'
+                : caf.corr < -0.4 ? '⚠️ Effet inverse fort — vérifier les inputs'
+                : 'Léger effet inverse'}
+            </div>
+            <div class="mut" style="font-size:11px">${caf.n} paires café→sommeil</div>
+          </div>
+        </div>
+        ${caf.n < 14 ? `
+          <p class="mut" style="font-size:11px;margin-top:10px">
+            🛈 ${caf.n} paires seulement — vise &gt;14 jours pour une corrélation fiable.
+          </p>` : ''}
+      ` : `
+        <p class="mut">Logge ton dernier café + sommeil (Oura/manuel) pendant 2 semaines pour voir la corrélation.</p>
+        ${caf ? `<p class="mut" style="font-size:11px">${caf.n}/14 paires collectées</p>` : ''}
+      `}
+    </div>
+  `);
+
+  // --- 3. Lumière matinale (Wright 2013) ----------------------------
+  const ls = (S.body.lifestyle || []).filter(l =>
+    l.morningLight != null && Date.parse(l.date) > Date.now() - 60 * 86400000
+  );
+  if (ls.length >= 7) {
+    const lightDays = ls.filter(l => l.morningLight).length;
+    const ratio = Math.round(lightDays / ls.length * 100);
+    cards.push(`
+      <div class="card">
+        <h2>🌞 Lumière matinale</h2>
+        <p class="mut" style="font-size:12px;margin:-4px 0 12px">
+          Wright 2013 — 10 min de lumière vive avant 10h améliore l'alignement circadien et la qualité du sommeil le soir.
+        </p>
+        <div style="display:flex;gap:20px;align-items:baseline">
+          <div>
+            <div class="stat">${ratio}%</div>
+            <div class="mut" style="font-size:11px">jours avec lumière (60 derniers)</div>
+          </div>
+          <div>
+            <div style="font-size:14px;font-weight:600">
+              ${ratio >= 70 ? '✓ Très régulier'
+                : ratio >= 40 ? '⚖️ Irrégulier — viser &gt;70%'
+                : '⚠️ Manque chronique de lumière du matin'}
+            </div>
+            <div class="mut" style="font-size:11px">${lightDays}/${ls.length} jours</div>
+          </div>
+        </div>
+      </div>
+    `);
+  }
+
+  // --- 4. Body weight trend (Hall 2011) -----------------------------
+  if (S.body.weights && S.body.weights.length >= 3) {
+    const t6 = Sci.bodyWeightTrend(S.body.weights, { weeks: 6 });
+    const t12 = Sci.bodyWeightTrend(S.body.weights, { weeks: 12 });
+    if (t6 || t12) {
+      const row = (t, label) => t ? `
+        <tr>
+          <td>${label}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">
+            ${t.slopeKgPerWeek > 0 ? '+' : ''}${t.slopeKgPerWeek} kg/sem
+          </td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">
+            ${t.kcalPerDay > 0 ? '+' : ''}${t.kcalPerDay} kcal/j
+          </td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">R²=${t.r2}</td>
+        </tr>` : '';
+      cards.push(`
+        <div class="card">
+          <h2>⚖️ Trend poids (Hall 2011)</h2>
+          <p class="mut" style="font-size:12px;margin:-4px 0 12px">
+            Régression linéaire qui filtre le bruit eau/glycogène. 1 kg ≈ 7700 kcal.
+          </p>
+          <table style="width:100%;font-size:13px">
+            <thead><tr style="color:var(--mut);text-align:left;font-size:11px">
+              <th>Fenêtre</th><th style="text-align:right">Pente</th><th style="text-align:right">Bilan kcal</th><th style="text-align:right">Fit</th>
+            </tr></thead>
+            <tbody>${row(t6, '6 sem')}${row(t12, '12 sem')}</tbody>
+          </table>
+          ${t6 && t6.r2 < 0.3 ? `
+            <p class="mut" style="font-size:11px;margin-top:10px">
+              🛈 R² faible — beaucoup de variation jour-à-jour, le trend est encore incertain.
+            </p>` : ''}
+        </div>
+      `);
+    }
+  }
+
+  // --- 5. HRV (Plews 2013) -------------------------------------------
+  const hrvR = S.body.physio && S.body.physio.length > 0
+    ? Sci.hrvReadiness(S.body.physio) : null;
+  if (hrvR) {
+    const b = hrvR.baseline;
+    cards.push(`
+      <div class="card">
+        <h2>💓 HRV — état autonomique</h2>
+        <p class="mut" style="font-size:12px;margin:-4px 0 12px">
+          Plews 2013 — RMSSD comparé à ta baseline 7j roulant. Plus sensible que l'absolu.
+        </p>
+        <div style="display:flex;gap:20px;align-items:baseline">
+          <div>
+            <div class="stat">${Math.round(b.latestRmssd)} ms</div>
+            <div class="mut" style="font-size:11px">aujourd'hui</div>
+          </div>
+          <div>
+            <div class="stat" style="opacity:.6">${Math.round(b.baselineRmssd)} ms</div>
+            <div class="mut" style="font-size:11px">baseline 7j</div>
+          </div>
+          <div>
+            <div style="font-size:18px;font-weight:600">z = ${hrvR.z}</div>
+            <div class="mut" style="font-size:11px">${hrvR.label}</div>
+          </div>
+        </div>
+        <p class="mut" style="font-size:11px;margin-top:10px">
+          Variance individuelle (SD ln) : ${b.sd.toFixed(3)} sur ${b.nExt} jours.
+          Chute &gt;0.5 SD = signal réduction de charge.
+        </p>
+      </div>
+    `);
+  }
+
+  // --- 6. PVT historique (Dinges) ------------------------------------
+  if (S.body.pvt && S.body.pvt.length >= 2) {
+    const sorted = S.body.pvt.slice().sort((a, b) =>
+      Date.parse(a.date) - Date.parse(b.date));
+    const last = sorted[sorted.length - 1];
+    const first = sorted[0];
+    const meanTrend = last.meanMs - first.meanMs;
+    const totalLapses = sorted.reduce((a, p) => a + (p.lapses || 0), 0);
+    cards.push(`
+      <div class="card">
+        <h2>🧠 Vigilance (PVT)</h2>
+        <p class="mut" style="font-size:12px;margin:-4px 0 12px">
+          Dinges 1985 — temps de réaction et lapses (RT&gt;500ms) sur ${sorted.length} tests.
+        </p>
+        <div style="display:flex;gap:20px;align-items:baseline">
+          <div>
+            <div class="stat">${last.meanMs} ms</div>
+            <div class="mut" style="font-size:11px">dernier RT moyen</div>
+          </div>
+          <div>
+            <div style="font-size:16px;font-weight:600">
+              ${meanTrend > 20 ? '↑' : meanTrend < -20 ? '↓' : '→'} ${meanTrend > 0 ? '+' : ''}${meanTrend} ms
+            </div>
+            <div class="mut" style="font-size:11px">vs premier test</div>
+          </div>
+          <div>
+            <div class="stat">${last.lapses}</div>
+            <div class="mut" style="font-size:11px">lapses dernier test</div>
+          </div>
+        </div>
+        <p class="mut" style="font-size:11px;margin-top:10px">
+          ${last.meanMs < 350 ? '✓ Vigilance excellente.'
+            : last.meanMs < 500 ? 'Vigilance normale.'
+            : last.lapses >= 3 ? '⚠️ Lapses fréquents — signe de fatigue cognitive (Basner 2011).'
+            : 'Vigilance ralentie.'}
+        </p>
+      </div>
+    `);
+  }
+
+  // --- 7. Adhérence intentions (Gollwitzer) --------------------------
+  if (S.body.intentions && S.body.intentions.length > 0) {
+    const cutoff = Date.now() - 30 * 86400000;
+    const recent = S.body.intentions.filter(i => Date.parse(i.date) >= cutoff);
+    const done = recent.filter(i => i.status === 'done').length;
+    const missed = recent.filter(i => i.status === 'missed').length;
+    const pending = recent.filter(i => i.status === 'pending').length;
+    const closed = done + missed;
+    const adherence = closed > 0 ? Math.round(done / closed * 100) : null;
+    cards.push(`
+      <div class="card">
+        <h2>🎯 Adhérence aux intentions</h2>
+        <p class="mut" style="font-size:12px;margin:-4px 0 12px">
+          Gollwitzer 1999 — taux de "fait" sur les 30 derniers jours.
+        </p>
+        <div style="display:flex;gap:18px;align-items:baseline">
+          <div>
+            <div class="stat">${adherence != null ? adherence + '%' : '—'}</div>
+            <div class="mut" style="font-size:11px">taux de succès</div>
+          </div>
+          <div style="font-size:13px;line-height:1.6">
+            ✓ ${done} fait${done > 1 ? 's' : ''}<br>
+            ✗ ${missed} manqué${missed > 1 ? 's' : ''}<br>
+            ⏳ ${pending} en cours
+          </div>
+        </div>
+      </div>
+    `);
+  }
+
+  // --- 8. Asymétries (Bishop 2018) — vue détaillée ------------------
+  const asyms = Sci.asymmetryReport(S.history, { weeks: 8, minReps: 4 });
+  if (asyms.length > 0) {
+    cards.push(`
+      <div class="card">
+        <h2>⚖️ Asymétries détaillées</h2>
+        <p class="mut" style="font-size:12px;margin:-4px 0 12px">
+          Bishop 2018 — agrégation 8 semaines. Cible &lt;5% pour réduire le risque blessure.
+        </p>
+        <table style="width:100%;font-size:13px">
+          <thead><tr style="color:var(--mut);text-align:left;font-size:11px">
+            <th>Exo</th><th>L</th><th>R</th>
+            <th style="text-align:right">Écart</th><th>Statut</th>
+          </tr></thead>
+          <tbody>
+            ${asyms.map(a => {
+              const exo = EX_BY_ID[a.exoId];
+              const name = exo ? exo.n : a.exoId;
+              const sevColor = a.label === 'severe' ? 'var(--danger,#c0392b)'
+                            : a.label === 'notable' ? 'var(--warning,#d68910)'
+                            : 'var(--mut)';
+              return `<tr>
+                <td>${escapeHtml(name)}</td>
+                <td style="font-variant-numeric:tabular-nums">${a.leftAvg}</td>
+                <td style="font-variant-numeric:tabular-nums">${a.rightAvg}</td>
+                <td style="text-align:right;font-variant-numeric:tabular-nums;color:${sevColor}">${a.diffPct}%</td>
+                <td style="color:${sevColor}">${a.label}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `);
+  }
+
+  // Etat vide
+  if (cards.length === 0) {
+    cards.push(`
+      <div class="card">
+        <p class="mut">Pas encore assez de données pour calculer les corrélations.</p>
+        <p class="mut" style="font-size:12px">
+          Reviens dans 1-2 semaines après avoir loggé Hooper, lifestyle, et fait quelques séances.
+        </p>
+      </div>
+    `);
+  }
+
+  box.innerHTML = cards.join('');
 }
 
 function renderBadges() {
@@ -4749,13 +5702,73 @@ function labelFromScore(f) {
   return 'Très fatigué — deload / récup active.';
 }
 
+// Vrai si la dernière entrée d'historique date d'aujourd'hui (jour calendaire
+// local). Sert à masquer la "prochaine séance" : juste après avoir fini, on
+// préfère afficher un état de récup plutôt que de spoiler la séance suivante
+// (qui sera générée au prochain réveil du planificateur).
+function sessionDoneToday() {
+  const h = S.history;
+  if (!Array.isArray(h) || h.length === 0) return false;
+  const last = h[h.length - 1];
+  if (!last || !last.date) return false;
+  // Comparaison sur date locale YYYY-MM-DD pour éviter les pièges TZ.
+  const d = new Date(last.date);
+  const todayISO = new Date().toISOString().slice(0, 10);
+  return d.toISOString().slice(0, 10) === todayISO;
+}
+
+// Pilote la bannière "séance d'aujourd'hui faite" et masque/réaffiche le
+// bloc de preview de la prochaine séance. Idempotent.
+function applyTodayDoneBanner() {
+  const card = document.getElementById('nextSessionCard');
+  if (!card) return;
+  const banner = document.getElementById('todayDoneBanner');
+  const preview = document.getElementById('nextSessionPreview');
+  if (!banner || !preview) return;
+  const showAnyway = card.dataset.showNextAnyway === '1';
+  const done = sessionDoneToday();
+  if (done && !showAnyway) {
+    banner.classList.remove('hide');
+    preview.classList.add('hide');
+  } else {
+    banner.classList.add('hide');
+    preview.classList.remove('hide');
+  }
+}
+
+// Bouton "Afficher quand même" — revient à l'affichage normal pour la
+// session courante. La préférence n'est pas persistée : au prochain
+// openHome, la bannière revient.
+(function wireShowNextAnyway() {
+  const btn = document.getElementById('showNextAnyway');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const card = document.getElementById('nextSessionCard');
+    if (!card) return;
+    card.dataset.showNextAnyway = '1';
+    applyTodayDoneBanner();
+  });
+})();
+
 function renderNext() {
+  // Bandeau "fait aujourd'hui" en premier : si on cache la preview,
+  // pas la peine de gaspiller du travail à remplir nextSessionBox.
+  applyTodayDoneBanner();
   const s = S.currentSession;
   const box = document.getElementById('nextSessionBox');
   if (!s) { box.innerHTML = '<p class="mut">Pas encore de séance.</p>'; return; }
   const rows = s.exos.map((e, idx) => {
     const sw = supportsWeight(e.id);
-    const weightPart = (sw && e.weight) ? e.weight + 'kg · ' : (sw ? '' : 'poids du corps · ');
+    // Annotation 1 vs 2 haltères : ajoutée entre parenthèses si l'exo utilise
+    // des haltères. "(×2 → 24 kg total)" pour les exos à 2 haltères avec poids
+    // connu, juste "(haltère unique)" pour les exos à 1 haltère.
+    let dbSuffix = '';
+    if (sw && dbHandsFor(e.id) != null) {
+      const h = dbHandsFor(e.id);
+      if (h === 1) dbSuffix = ' (1 haltère)';
+      else if (h === 2) dbSuffix = e.weight ? ` (×2 = ${e.weight * 2} kg total)` : ' (1 par main)';
+    }
+    const weightPart = (sw && e.weight) ? e.weight + 'kg' + dbSuffix + ' · ' : (sw ? '' : 'poids du corps · ');
     // Only surface the reason pill when it's actually meaningful:
     //  - weight exos: show progressive-overload hint
     //  - timed exos: show the tenue hint
@@ -5531,6 +6544,12 @@ function renderSession() {
     const lib = EX_BY_ID[e.id];
     const setNum = t.setIdx + 1;
     const showWeight = !e.timed && supportsWeight(e.id);
+    // Unilatéral : on demande le côté travaillé. Default = alterne G/D
+    // selon la parité de la série (1=G, 2=D, 3=G, ...), pour qu'au bout de
+    // 4 séries chaque côté ait été fait 2× sans configuration manuelle.
+    // L'utilisateur peut surcharger via les chips.
+    const isUni = !!(lib && lib.unilateral);
+    const defaultSide = (t.setIdx % 2 === 0) ? 'L' : 'R';
 
     const card = document.createElement('div');
     card.className = 'focus-card';
@@ -5538,7 +6557,7 @@ function renderSession() {
     card.innerHTML = `
       <div class="focus-exo-label">SÉRIE ${logOverallIdx}/${totalSets} · Exo ${t.exoIdx + 1}/${s.exos.length}</div>
       <h2>
-        <span>${escapeHtml(e.name)}${e.timed ? ' <span class="pill" style="vertical-align:middle">tenue</span>' : ''}</span>
+        <span>${escapeHtml(e.name)}${e.timed ? ' <span class="pill" style="vertical-align:middle">tenue</span>' : ''}${isUni ? ' <span class="pill" style="vertical-align:middle">unilatéral</span>' : ''}</span>
         <button class="info-btn" id="focusInfo">ℹ</button>
       </h2>
       ${lib ? `<div class="focus-exo-desc">${escapeHtml(lib.desc)}</div>` : ''}
@@ -5551,6 +6570,24 @@ function renderSession() {
           ? `Tiens ${e.reps}s · série ${setNum}/${e.sets}`
           : `${e.reps} reps${showWeight && e.weight ? ' @ ' + e.weight + 'kg' : ''} · série ${setNum}/${e.sets}`}
       </div>
+      ${showWeight && dumbbellNote(e.id) ? `
+        <div class="focus-target-sub mut" style="font-size:12px;text-align:center;margin-top:-4px">
+          ${escapeHtml(dumbbellNote(e.id))}${dbHandsFor(e.id) === 2 && e.weight ? ` · total ${(e.weight * 2)} kg` : ''}
+        </div>
+      ` : ''}
+      ${isUni ? `
+        <!-- Sélecteur de côté pour les exos unilatéraux. Le côté est
+             persisté dans le set record (side: 'L'|'R'|'B'), ce qui permet
+             d'afficher après coup les déséquilibres G/D dans le bilan. -->
+        <div class="focus-input" style="margin-top:6px">
+          <label>Côté travaillé</label>
+          <div class="chip-row" id="focusSideRow" role="radiogroup" aria-label="Côté">
+            <button type="button" class="chip${defaultSide === 'L' ? ' on' : ''}" data-side="L" role="radio" aria-checked="${defaultSide === 'L'}">Gauche</button>
+            <button type="button" class="chip${defaultSide === 'R' ? ' on' : ''}" data-side="R" role="radio" aria-checked="${defaultSide === 'R'}">Droite</button>
+            <button type="button" class="chip" data-side="B" role="radio" aria-checked="false">2 côtés</button>
+          </div>
+        </div>
+      ` : ''}
       ${e.timed ? '' : `
         <div class="focus-inputs ${showWeight ? '' : 'single'}">
           <div class="focus-input">
@@ -5582,6 +6619,20 @@ function renderSession() {
       // Return to session when back is pressed.
       openExerciseDetail(e.id, () => { show('viewSession'); renderSession(); });
     });
+    // Wire le sélecteur de côté (chips mutuellement exclusifs).
+    const sideRow = card.querySelector('#focusSideRow');
+    if (sideRow) {
+      sideRow.querySelectorAll('.chip').forEach(c => {
+        c.addEventListener('click', () => {
+          sideRow.querySelectorAll('.chip').forEach(b => {
+            b.classList.remove('on');
+            b.setAttribute('aria-checked', 'false');
+          });
+          c.classList.add('on');
+          c.setAttribute('aria-checked', 'true');
+        });
+      });
+    }
     card.querySelector('#focusGo').addEventListener('click', () => logSet(t.exoIdx, t.setIdx));
   }
 
@@ -5604,71 +6655,398 @@ function renderSession() {
   document.getElementById('sessEndBox').classList.toggle('hide', !allDone);
   if (allDone) {
     const trainedZones = new Set();
+    // zoneSets : compte le volume réel par zone (en séries). Un exo qui
+    // touche plusieurs zones (ex: SDT = back+legs) crédite chaque zone du
+    // nombre de séries — c'est volontairement généreux, on veut que la zone
+    // soit comptée comme travaillée, pas mesurer une "vraie" charge isolée.
+    const zoneSets = {};
     for (const ex of s.exos) {
       const lib = EX_BY_ID[ex.id];
-      for (const z of (lib && lib.z) || []) trainedZones.add(z);
+      for (const z of (lib && lib.z) || []) {
+        trainedZones.add(z);
+        zoneSets[z] = (zoneSets[z] || 0) + (ex.sets || 0);
+      }
     }
-    const stretches = cooldownFor(Array.from(trainedZones));
+    // Vrai programme d'étirements : durées en secondes, côté G/D, etc.
+    // On stocke aussi le plan en mémoire (window._stretchPlan) pour que le
+    // handler du bouton "Lancer" puisse y accéder sans recalculer.
+    const plan = buildStretchProgram(Array.from(trainedZones), { zoneSets });
+    window._stretchPlan = plan;
     const cd = document.getElementById('cooldownBox');
     if (cd) {
-      if (stretches.length === 0) {
+      if (plan.length === 0) {
         cd.innerHTML = '';
       } else {
+        // Durée totale estimée pour cadrer l'attente utilisateur.
+        const totalSec = plan.reduce((a, it) => a + (it.perSide ? it.dur * 2 : it.dur), 0);
+        const mins = Math.round(totalSec / 60);
+        const items = plan.map(s2 => {
+          const durStr = s2.perSide ? `${s2.dur}s × 2 côtés` : `${s2.dur}s`;
+          return `<li>
+            <div class="cooldown-name"><strong>${escapeHtml(s2.name)}</strong> <span class="mut">— ${durStr}</span></div>
+            <div class="cooldown-cue mut" style="font-size:12px">${escapeHtml(s2.cue)}</div>
+          </li>`;
+        }).join('');
         cd.innerHTML = `
           <p class="mut" style="font-size:12px;text-align:center;margin:0 0 8px">
-            🧘 Cooldown 3-5 min — étire les zones travaillées
+            🧘 Programme d'étirement guidé · ~${mins} min · ${plan.length} postures
           </p>
-          <ul class="cooldown-list">${stretches.map(s2 =>
-            `<li><strong>${escapeHtml(s2.name)}</strong> — ${escapeHtml(s2.cue)} <span class="mut">(${s2.dur})</span></li>`
-          ).join('')}</ul>`;
+          <ul class="cooldown-list">${items}</ul>
+          <button id="startStretchBtn" class="ok w-full" style="margin-top:10px">
+            ▶ Lancer le programme guidé
+          </button>
+          <p class="mut" style="font-size:11px;text-align:center;margin:6px 0 0">
+            Chaque posture est chronométrée — change de côté quand l'app le demande.
+          </p>`;
+        // Wire le bouton. Au clic : runStretchProgram → retour à viewSession.
+        const startBtn = document.getElementById('startStretchBtn');
+        if (startBtn) {
+          startBtn.onclick = async () => {
+            startBtn.disabled = true;
+            startBtn.textContent = '… en cours';
+            try {
+              await runStretchProgram(window._stretchPlan || []);
+            } catch (_) {}
+            // Retour à viewSession ; on marque le programme comme fait
+            // pour éventuellement changer le texte du bouton.
+            show('viewSession');
+            const b = document.getElementById('startStretchBtn');
+            if (b) {
+              b.disabled = false;
+              b.textContent = '✓ Refaire le programme';
+              b.classList.remove('ok');
+              b.classList.add('sec');
+            }
+          };
+        }
       }
     }
   }
 }
 
-// cooldownFor — pick 2-3 mobility items based on which zones got worked.
-// Pure data lookup; no audio, no timer — the user reads it and stretches.
-const COOLDOWN_LIB = {
+/* =================== PROGRAMME D'ÉTIREMENT POST-SÉANCE ===================
+ *
+ * v2 — vrai programme guidé (avant : simple liste de texte).
+ *
+ * Format de la librairie : par zone musculaire, une liste d'étirements
+ * statiques avec :
+ *   - name     : libellé court affiché en gros pendant le décompte
+ *   - cue      : 1-2 phrases sur la position (placement, sensation à viser)
+ *   - dur      : durée en secondes par côté (ou totale si bilateral)
+ *   - perSide  : true → on enchaîne automatiquement gauche puis droite,
+ *                false (défaut) → posture bilatérale, durée unique
+ *
+ * Pourquoi des durées en secondes (pas "30s/jambe" en string) ? Parce que
+ * le runStretchProgram(list) chronomètre vraiment chaque posture — l'app
+ * te dit "Tiens 40s côté gauche" et bipe quand c'est fini, puis enchaîne.
+ * Ça remplace la liste passive précédente que personne ne suivait. */
+
+// Chaque entrée porte aussi un champ optionnel `targets` : sous-muscles
+// précis visés. Sert au moteur de sélection pour panacher dans une zone
+// large (ex: legs = quads + ischios + mollets + adducteurs + glutes), au
+// lieu d'empiler 3 stretches qui touchent le même muscle.
+const STRETCH_LIB = {
   legs: [
-    { name: 'Étirement quadriceps debout', cue: 'Tiens un pied vers les fesses, hanches en avant', dur: '30s/jambe' },
-    { name: 'Pigeon allongé (figure 4)', cue: 'Cheville sur le genou opposé, tire la cuisse', dur: '40s/jambe' },
+    {
+      name: 'Étirement quadriceps debout',
+      cue: 'Debout, attrape un pied et tire-le vers la fesse, genoux côte à côte. Pousse les hanches en avant, contracte les fessiers. Tu dois sentir l\'avant de la cuisse.',
+      dur: 35, perSide: true, targets: ['quads'],
+    },
+    {
+      name: 'Couch stretch (canapé)',
+      cue: 'Genou arrière au sol contre un mur (ou un canapé), tibia vertical. Genou avant à 90°, buste droit. Sens l\'étirement profond quadriceps + psoas de la jambe arrière. Tiens, change.',
+      dur: 45, perSide: true, targets: ['quads', 'hipflex'],
+    },
+    {
+      name: 'Pigeon allongé (figure 4)',
+      cue: 'Allongé sur le dos, cheville d\'une jambe posée sur le genou opposé. Attrape l\'arrière de la cuisse au sol et tire vers la poitrine. Sensation dans la fesse / hanche.',
+      dur: 45, perSide: true, targets: ['glutes'],
+    },
+    {
+      name: 'Pigeon au sol',
+      cue: 'Genou avant plié sur le côté (tibia perpendiculaire), jambe arrière tendue loin derrière. Buste vers l\'avant sur les coudes, respire profond. Stretch fessier + hanche externe.',
+      dur: 50, perSide: true, targets: ['glutes'],
+    },
+    {
+      name: 'Étirement ischios assis',
+      cue: 'Assis, une jambe tendue devant toi, l\'autre pliée. Penche-toi vers la jambe tendue en gardant le dos droit, attrape le pied (ou le tibia). Sens l\'arrière de la cuisse.',
+      dur: 40, perSide: true, targets: ['hamstrings'],
+    },
+    {
+      name: 'Étirement ischios debout sangle',
+      cue: 'Allongé sur le dos, jambe tendue vers le plafond, sangle (ou ceinture) sous la plante du pied. Tire doucement la jambe vers toi en gardant le genou tendu. Sens l\'arrière de la cuisse.',
+      dur: 35, perSide: true, targets: ['hamstrings'],
+    },
+    {
+      name: 'Étirement mollet contre mur',
+      cue: 'Mains au mur, une jambe en avant pliée, l\'autre tendue loin derrière, talon AU SOL. Avance le bassin contre le mur. Tu dois sentir le mollet de la jambe arrière.',
+      dur: 30, perSide: true, targets: ['calves'],
+    },
+    {
+      name: 'Étirement soléaire (genou plié)',
+      cue: 'Même position que mollet contre mur, mais cette fois plie le genou de la jambe arrière en gardant le talon au sol. Cible le soléaire (mollet profond) au lieu du gastrocnémien.',
+      dur: 25, perSide: true, targets: ['calves'],
+    },
+    {
+      name: 'Papillon (adducteurs)',
+      cue: 'Assis, plantes des pieds collées, genoux ouverts. Tiens les chevilles, dos droit, penche-toi doucement vers l\'avant. Sens l\'intérieur des cuisses.',
+      dur: 50, targets: ['adductors'],
+    },
+    {
+      name: 'Frog stretch (grenouille)',
+      cue: 'À quatre pattes, écarte progressivement les genoux le plus large possible, tibias dans l\'alignement. Pousse les hanches doucement vers l\'arrière. Adducteurs profonds.',
+      dur: 45, targets: ['adductors'],
+    },
   ],
   back: [
-    { name: 'Cat-cow', cue: 'À 4 pattes, alterne dos rond / dos creux', dur: '8 cycles lents' },
-    { name: 'Suspension passive', cue: 'À une barre, bras tendus, relâche les épaules', dur: '20s × 2' },
+    {
+      name: 'Cat-cow',
+      cue: 'À quatre pattes, mains sous les épaules, genoux sous les hanches. Alterne lentement dos rond (expire) et dos creux (inspire). Respire profondément à chaque cycle.',
+      dur: 60, targets: ['spine'],
+    },
+    {
+      name: 'Twist allongé 90/90',
+      cue: 'Allongé sur le dos, bras en croix. Genoux pliés, laisse-les tomber d\'un côté en gardant les épaules au sol. Regarde de l\'autre côté.',
+      dur: 35, perSide: true, targets: ['spine', 'obliques'],
+    },
+    {
+      name: 'Child\'s pose étendue',
+      cue: 'À genoux, fesses sur les talons, genoux écartés. Bras tendus loin devant, front au sol. Respire dans le bas du dos.',
+      dur: 60, targets: ['lats', 'lower-back'],
+    },
+    {
+      name: 'Lat stretch à 4 pattes',
+      cue: 'À quatre pattes, mains posées sur un meuble bas (banc, canapé) devant toi. Recule les fesses vers les talons, bras tendus. Tu dois sentir un grand étirement le long des lats et des aisselles.',
+      dur: 40, perSide: true, targets: ['lats'],
+    },
+    {
+      name: 'Suspension passive',
+      cue: 'À une barre, prise pronation, bras tendus, pieds qui frôlent le sol. Relâche complètement les épaules, laisse pendre. Décompression vertébrale.',
+      dur: 25, targets: ['lats', 'spine'],
+    },
+    {
+      name: 'Thread the needle',
+      cue: 'À quatre pattes, glisse un bras sous l\'autre, joue et épaule au sol. Garde les hanches au-dessus des genoux. Twist thoracique profond. Change de côté.',
+      dur: 30, perSide: true, targets: ['spine', 'rear-delts'],
+    },
+    {
+      name: 'Étirement lombaire knees-to-chest',
+      cue: 'Allongé sur le dos, ramène les deux genoux contre la poitrine, bras autour des tibias. Berce doucement gauche-droite. Décompression lombaire.',
+      dur: 40, targets: ['lower-back'],
+    },
   ],
   chest: [
-    { name: 'Doorway stretch', cue: 'Avant-bras contre le chambranle, coude à 90°, avance', dur: '30s/côté' },
+    {
+      name: 'Doorway stretch (chambranle)',
+      cue: 'Avant-bras contre le chambranle d\'une porte, coude à 90°. Avance un pied dans le passage et tourne légèrement le buste à l\'opposé. Sens l\'ouverture du pec.',
+      dur: 35, perSide: true, targets: ['pec'],
+    },
+    {
+      name: 'Étirement pec couché bras en T',
+      cue: 'Allongé sur le ventre, bras en croix paume au sol. Pousse sur ton autre main pour rouler doucement sur le côté du bras tendu. Pec ouvert profond.',
+      dur: 40, perSide: true, targets: ['pec'],
+    },
+    {
+      name: 'Pec stretch coin (haut + bas)',
+      cue: 'Face à un angle de mur. Pose les deux avant-bras sur les deux murs, coudes à hauteur d\'épaule. Avance un pied dans l\'angle pour creuser. Pour cibler le pec haut, baisse les coudes ; pour le pec bas, monte-les.',
+      dur: 40, targets: ['pec'],
+    },
+    {
+      name: 'Bras en candélabre allongé',
+      cue: 'Allongé sur le dos, bras en candélabre (coudes à 90°, dos des mains au sol au-dessus de la tête). Laisse la gravité ouvrir poitrine + avant-épaule. Respire lentement.',
+      dur: 50, targets: ['pec', 'anterior-delt'],
+    },
   ],
   shoulders: [
-    { name: 'Cross-body', cue: 'Tire un bras devant la poitrine avec l\'autre main', dur: '30s/côté' },
+    {
+      name: 'Cross-body épaule',
+      cue: 'Debout, tire un bras tendu devant la poitrine vers l\'épaule opposée, accroche-le avec l\'autre main au coude. Sens l\'arrière de l\'épaule s\'ouvrir.',
+      dur: 30, perSide: true, targets: ['rear-delts'],
+    },
+    {
+      name: 'Sleeper stretch (rotateurs)',
+      cue: 'Allongé sur le côté, bras du dessous à 90° vers l\'avant. Avec l\'autre main, pousse doucement la main du bras au sol vers le bas. Stretch profond rotateurs internes.',
+      dur: 30, perSide: true, targets: ['rotators'],
+    },
+    {
+      name: 'Cercles d\'épaules + ouvertures',
+      cue: 'Debout. 10 grands cercles épaules en arrière, lentement. Puis bras croisés devant → grande ouverture en arrière 5 fois. Mobilité dynamique.',
+      dur: 40, targets: ['delts'],
+    },
+    {
+      name: 'Étirement deltoïde postérieur (vache)',
+      cue: 'Bras dans le dos, l\'un par-dessus (paume entre les omoplates), l\'autre par-dessous (paume vers le haut). Essaie d\'attraper tes doigts. Si tu n\'y arrives pas, sangle ou serviette.',
+      dur: 30, perSide: true, targets: ['rear-delts', 'rotators'],
+    },
   ],
   arms: [
-    { name: 'Triceps overhead', cue: 'Coude vers le plafond, tire avec l\'autre main', dur: '25s/bras' },
+    {
+      name: 'Triceps overhead',
+      cue: 'Bras levé, plie le coude pour amener la main entre les omoplates. Avec l\'autre main, tire doucement le coude vers la tête. Sens l\'arrière du bras.',
+      dur: 30, perSide: true, targets: ['triceps'],
+    },
+    {
+      name: 'Étirement biceps mur',
+      cue: 'Debout dos au mur, place la paume contre le mur derrière toi, bras tendu, pouce vers le bas. Tourne le corps lentement vers l\'opposé. Sens le biceps + avant-bras.',
+      dur: 30, perSide: true, targets: ['biceps'],
+    },
+    {
+      name: 'Étirement avant-bras (fléchisseurs)',
+      cue: 'Bras tendu devant, paume vers le haut. Avec l\'autre main, tire les doigts vers toi (poignet en hyperextension). Sens l\'intérieur de l\'avant-bras.',
+      dur: 25, perSide: true, targets: ['forearm'],
+    },
+    {
+      name: 'Étirement avant-bras (extenseurs)',
+      cue: 'Bras tendu devant, paume vers le bas. Avec l\'autre main, plie le poignet vers le bas / vers toi. Sens l\'extérieur de l\'avant-bras.',
+      dur: 25, perSide: true, targets: ['forearm'],
+    },
   ],
   core: [
-    { name: 'Child\'s pose', cue: 'Genoux écartés, fesses sur talons, bras tendus devant', dur: '45s' },
+    {
+      name: 'Cobra',
+      cue: 'Allongé sur le ventre, mains sous les épaules. Pousse doucement le buste vers le haut en gardant le bassin au sol. Extension lombaire douce, étire le grand droit.',
+      dur: 35, targets: ['abs', 'lower-back'],
+    },
+    {
+      name: 'Twist assis vertébral',
+      cue: 'Assis jambes tendues, plie une jambe et croise-la par-dessus l\'autre. Tourne le buste du côté de la jambe pliée, coude opposé contre le genou.',
+      dur: 30, perSide: true, targets: ['obliques', 'spine'],
+    },
+    {
+      name: 'Side bend debout',
+      cue: 'Debout, bras tendu au-dessus de la tête, l\'autre le long du corps. Penche le buste sur le côté opposé au bras levé, sans avancer/reculer les hanches. Sens le grand oblique.',
+      dur: 25, perSide: true, targets: ['obliques'],
+    },
+  ],
+  // Hip flexors travaillent dur dès qu'on fait des squats / fentes / hip thrusts
+  // — souvent raccourcis chez les sédentaires. Inséré automatiquement si la
+  // séance a touché les jambes ou le core.
+  hipflex: [
+    {
+      name: 'Étirement psoas en fente',
+      cue: 'Position de fente basse, genou arrière au sol. Pousse les hanches en avant en gardant le buste vertical, contracte le fessier de la jambe arrière. Sens l\'avant de la hanche.',
+      dur: 40, perSide: true, targets: ['hipflex'],
+    },
+    {
+      name: 'Psoas avec bras levé',
+      cue: 'Même position que l\'étirement psoas en fente, mais lève le bras du même côté que la jambe arrière au-dessus de la tête, et incline-toi vers l\'opposé. Stretch psoas + flanc.',
+      dur: 35, perSide: true, targets: ['hipflex', 'obliques'],
+    },
   ],
 };
-function cooldownFor(zones) {
+
+// Construit un programme d'étirements ciblé sur les muscles travaillés.
+//
+// API :
+//   buildStretchProgram(zones)
+//     → ancien appel, traite chaque zone comme "1 unité de volume"
+//   buildStretchProgram(zones, { zoneSets: { legs: 9, chest: 6, ... } })
+//     → préféré : utilise le décompte réel des séries par zone pour
+//       allouer plus de stretches aux zones lourdement travaillées
+//
+// Garanties :
+//   - chaque zone touchée reçoit AU MOINS 1 stretch (sauf si budget épuisé)
+//   - on diversifie par sous-muscle : si une zone a 3 stretches mais 2
+//     ciblent le même muscle (ex: quads), le 3e force un autre sous-muscle
+//   - hip-flexor automatiquement ajouté si jambes/core travaillés (ils sont
+//     systématiquement raccourcis chez les sédentaires)
+//   - durée totale plafonnée à ~7 min (420s) par défaut pour rester réaliste
+//
+// L'ordre de sortie suit l'intensité décroissante : la zone la plus
+// sollicitée en premier (rend le programme évident pour l'utilisateur).
+function buildStretchProgram(zones, opts) {
   if (!Array.isArray(zones) || zones.length === 0) return [];
+  const cfg = Object.assign({ maxSeconds: 420, maxItems: 7 }, opts || {});
+  const zoneSets = (opts && opts.zoneSets) || {};
   const out = [];
   const seen = new Set();
-  // Priority order: largest muscles first so the most-stressed area gets the
-  // first stretch slot. Cap at 3 items so the cooldown stays under 5 minutes.
-  const priority = ['legs', 'back', 'chest', 'shoulders', 'arms', 'core'];
-  for (const z of priority) {
-    if (out.length >= 3) break;
-    if (!zones.includes(z)) continue;
-    const items = COOLDOWN_LIB[z] || [];
-    for (const it of items) {
-      if (out.length >= 3) break;
-      if (seen.has(it.name)) continue;
-      seen.add(it.name);
-      out.push(it);
+  let budget = cfg.maxSeconds;
+
+  const totalDur = (it) => (it.perSide ? it.dur * 2 : it.dur);
+
+  // Volume par zone : si zoneSets fourni, on l'utilise ; sinon poids = 1.
+  // On ordonne les zones par volume décroissant (les plus travaillées
+  // passent en premier, donc reçoivent leur quota même si on doit couper).
+  const orderedZones = zones.slice().sort((a, b) =>
+    (zoneSets[b] || 1) - (zoneSets[a] || 1)
+  );
+
+  // Combien de stretches alloués par zone selon le volume.
+  // Heuristique simple : <4 séries → 1, 4-7 → 2, ≥8 → 3.
+  // Sans zoneSets : on retombe sur l'ancienne logique (heavily trained = 3).
+  const heavilyTrained = zones.length <= 2 && Object.keys(zoneSets).length === 0;
+  const quotaFor = (z) => {
+    if (Object.keys(zoneSets).length === 0) return heavilyTrained ? 3 : 2;
+    const v = zoneSets[z] || 0;
+    if (v >= 8) return 3;
+    if (v >= 4) return 2;
+    return 1;
+  };
+
+  // Tente d'ajouter un stretch d'une zone donnée, en privilégiant les
+  // sous-muscles pas encore couverts dans cette zone (variété).
+  const targetsCoveredInZone = {};  // zone → Set des targets déjà servies
+  function pushOne(z) {
+    const items = STRETCH_LIB[z] || [];
+    if (items.length === 0) return false;
+    const covered = targetsCoveredInZone[z] || new Set();
+    // Pass 1 : un stretch qui couvre une cible inédite. Pass 2 : n'importe lequel.
+    for (const pass of [1, 2]) {
+      for (const it of items) {
+        if (seen.has(it.name)) continue;
+        const d = totalDur(it);
+        if (d > budget) continue;
+        if (pass === 1 && it.targets && it.targets.every(t => covered.has(t))) continue;
+        seen.add(it.name);
+        if (it.targets) for (const t of it.targets) covered.add(t);
+        targetsCoveredInZone[z] = covered;
+        out.push(Object.assign({ zone: z }, it));
+        budget -= d;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Phase 1 — un stretch minimum par zone touchée (couverture).
+  for (const z of orderedZones) {
+    if (out.length >= cfg.maxItems || budget <= 0) break;
+    pushOne(z);
+  }
+
+  // Phase 2 — round-robin pour atteindre le quota de chaque zone.
+  // On boucle tant qu'au moins une zone a encore de la place et du contenu.
+  let progressing = true;
+  while (progressing && out.length < cfg.maxItems && budget > 0) {
+    progressing = false;
+    for (const z of orderedZones) {
+      if (out.length >= cfg.maxItems || budget <= 0) break;
+      const inZone = out.filter(x => x.zone === z).length;
+      if (inZone >= quotaFor(z)) continue;
+      if (pushOne(z)) progressing = true;
     }
   }
+
+  // Bonus hip-flexor si la séance a sollicité jambes ou core (toujours
+  // raccourcis chez les sédentaires).
+  if ((zones.includes('legs') || zones.includes('core'))
+      && out.length < cfg.maxItems) {
+    pushOne('hipflex');
+  }
+
   return out;
+}
+
+// Compat : ancienne API publique remplacée. cooldownFor() retournait
+// l'ancien format { name, cue, dur:string }. On garde un shim pour que les
+// éventuels appels externes (snacks, rééduc) ne pètent pas, en projetant la
+// nouvelle shape vers l'ancienne — durée formatée en string.
+function cooldownFor(zones) {
+  return buildStretchProgram(zones, { maxItems: 3, maxSeconds: 180 }).map(s => ({
+    name: s.name,
+    cue: s.cue,
+    dur: s.perSide ? `${s.dur}s/côté` : `${s.dur}s`,
+  }));
 }
 document.getElementById('sessToQuestion').addEventListener('click', openQuestion);
 
@@ -5690,71 +7068,153 @@ if (_sessPauseBtn) {
   });
 }
 
-/* =================== AUDIO HELPERS =================== */
-// Hard alarm: square wave, loud — used for reaction tests ("stop the beep").
+/* =================== AUDIO HELPERS ===================
+ * v2 — audibilité renforcée et variété sonore.
+ *
+ * Constats v1 (retour utilisateur) :
+ *   - les bips étaient trop faibles avec un téléphone en poche / sac
+ *   - les sons étaient toujours identiques (lassitude, on n'entend plus)
+ *
+ * Stratégie v2 :
+ *   - gain doublé (0.22 → 0.45 sur l'alarme, 0.12 → 0.28 sur les ticks)
+ *   - chaque appel pioche dans une variété de timbres : square, sawtooth,
+ *     triangle, et combinaisons à 2 oscillateurs pour un grain plus "riche"
+ *   - mélodies courtes (3-4 notes) plutôt qu'un beep mono-fréquence
+ *   - vibrations renforcées en parallèle (téléphone en poche)
+ *   - reverb légère via un compresseur dynamique pour gagner en perceived loudness
+ *
+ * Les fonctions exposées gardent leur signature : playAlarmBeep, playTick,
+ * playChime. Le set logging et le rest timer marchent sans changement. */
+
+// Petit utilitaire interne : crée un contexte audio + une chaîne de sortie
+// (gain master + compressor pour "épaissir" le son perçu).
+function _newAudioCtx() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AC();
+  const master = ctx.createGain();
+  master.gain.value = 1.0;
+  // Compressor : remonte les sons faibles, écrête les pics. Sans lui, le
+  // gain max possible avant clipping est trop bas pour être audible en gym.
+  let out = master;
+  try {
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -24;
+    comp.knee.value = 30;
+    comp.ratio.value = 12;
+    comp.attack.value = 0.003;
+    comp.release.value = 0.25;
+    master.connect(comp);
+    comp.connect(ctx.destination);
+    out = master;
+  } catch (_) {
+    master.connect(ctx.destination);
+  }
+  return { ctx, dest: out };
+}
+
+// Une "voix" = oscillateur + gain ADSR. Plusieurs voix simultanées =
+// son plus riche, perçu plus fort sans clipper.
+function _voice(ctx, dest, type, freq, start, dur, peak) {
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, ctx.currentTime + start);
+  g.gain.exponentialRampToValueAtTime(peak, ctx.currentTime + start + 0.01);
+  g.gain.setValueAtTime(peak, ctx.currentTime + start + Math.max(0.02, dur - 0.05));
+  g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + dur);
+  osc.connect(g);
+  g.connect(dest);
+  osc.start(ctx.currentTime + start);
+  osc.stop(ctx.currentTime + start + dur + 0.05);
+}
+
+// Palette de motifs d'alarme. À chaque appel on en pioche un — varié
+// = on reste alerte au lieu de filtrer le bip de l'app comme du bruit ambiant.
+const _ALARM_PATTERNS = [
+  // Bip court rapide × 6 — l'urgence pure.
+  { name: 'rapid',  beeps: 6, dur: 0.14, gap: 0.18, freq: 1000, type: 'square', detune: 7 },
+  // Bip aigu × 4, plus lent — claxon.
+  { name: 'horn',   beeps: 4, dur: 0.22, gap: 0.10, freq: 880,  type: 'sawtooth', detune: 0 },
+  // Bip grave × 3 — alerte profonde.
+  { name: 'deep',   beeps: 3, dur: 0.28, gap: 0.16, freq: 540,  type: 'square', detune: 0 },
+  // Sirène montante (police) × 5.
+  { name: 'siren',  beeps: 5, dur: 0.20, gap: 0.10, freq: 720,  type: 'triangle', sweep: 1.5 },
+  // Cloche métallique × 4 (cluster harmonique).
+  { name: 'bell',   beeps: 4, dur: 0.32, gap: 0.20, freq: 1200, type: 'sine', bell: true },
+];
+
+// Hard alarm : son fort, varié — utilisé pour le test réaction
+// ("stop le bip") et la fin du timer d'effort. Pioche aléatoirement dans
+// _ALARM_PATTERNS pour éviter la lassitude / désensibilisation.
 function playAlarmBeep(audioCtxRef) {
   try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    const ctx = new AC();
+    const { ctx, dest } = _newAudioCtx();
     audioCtxRef.ctx = ctx;
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.type = 'square'; osc.frequency.value = 880;
-    g.gain.value = 0.0001;
-    osc.connect(g); g.connect(ctx.destination);
-    osc.start();
-    let t = ctx.currentTime;
-    for (let i = 0; i < 20; i++) {
-      g.gain.setValueAtTime(0.22, t);
-      g.gain.setValueAtTime(0.0001, t + 0.18);
-      t += 0.45;
+    const pat = _ALARM_PATTERNS[Math.floor(Math.random() * _ALARM_PATTERNS.length)];
+    let t = 0;
+    const peak = 0.45; // ~2× v1
+    for (let i = 0; i < pat.beeps; i++) {
+      const f = pat.sweep ? pat.freq * (1 + (i / pat.beeps) * pat.sweep) : pat.freq;
+      _voice(ctx, dest, pat.type, f, t, pat.dur, peak);
+      // Détune léger sur une 2e voix pour épaissir.
+      if (pat.detune) _voice(ctx, dest, pat.type, f + pat.detune, t, pat.dur, peak * 0.7);
+      // Pour la cloche : harmoniques 2× et 3× → couleur métallique.
+      if (pat.bell) {
+        _voice(ctx, dest, 'sine', f * 2.0, t, pat.dur * 0.8, peak * 0.5);
+        _voice(ctx, dest, 'sine', f * 3.0, t, pat.dur * 0.6, peak * 0.3);
+      }
+      t += pat.dur + pat.gap;
     }
-    osc.stop(t);
-    if (navigator.vibrate) try { navigator.vibrate([200, 100, 200, 100, 200]); } catch (_) {}
+    setTimeout(() => { try { ctx.close(); } catch (_) {} }, (t + 0.5) * 1000);
+    // Vibration plus longue et marquée (téléphone en poche).
+    if (navigator.vibrate) try { navigator.vibrate([300, 80, 300, 80, 300, 80, 300]); } catch (_) {}
   } catch (_) {}
 }
 
-// Short countdown tick — single blip used for the "3,2,1" warning cadence near
-// the end of the rest timer. Kept short and quiet so it doesn't startle people
-// wearing headphones in a gym. Higher pitch than the chime so the two are
-// easily distinguishable ("oh, getting close" vs "go").
+// Tick de décompte : "3, 2, 1" avant la fin du repos. v2 — plus audible
+// (gain × 2.3) et avec un léger contour harmonique pour distinguer
+// nettement chaque tick (au lieu d'un blip mono-fréquence).
 function playTick(freq = 1200) {
   try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    const ctx = new AC();
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.type = 'square'; osc.frequency.value = freq;
-    g.gain.setValueAtTime(0.0001, ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.08);
-    osc.connect(g); g.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.1);
-    setTimeout(() => { try { ctx.close(); } catch (_) {} }, 200);
+    const { ctx, dest } = _newAudioCtx();
+    // 2 voix légèrement détunées = grain plus net + meilleure portée perçue.
+    _voice(ctx, dest, 'square',   freq,      0, 0.10, 0.28);
+    _voice(ctx, dest, 'triangle', freq * 2,  0, 0.08, 0.18);
+    setTimeout(() => { try { ctx.close(); } catch (_) {} }, 250);
   } catch (_) {}
 }
 
-// Soft chime: sine wave, pleasant — end of rest period.
+// Palette de chimes de fin de repos. Variation = on reste attentif.
+const _CHIME_MELODIES = [
+  // Quinte ascendante : 660 → 880 (v1, conservé).
+  [{ f: 660, t: 0,    d: 0.32 }, { f: 880, t: 0.16, d: 0.45 }],
+  // Arpège majeur do-mi-sol.
+  [{ f: 523, t: 0,    d: 0.22 }, { f: 659, t: 0.14, d: 0.22 }, { f: 784, t: 0.28, d: 0.50 }],
+  // Octave + quinte (cloche d'église miniature).
+  [{ f: 523, t: 0,    d: 0.50 }, { f: 1046, t: 0.10, d: 0.45 }, { f: 1568, t: 0.22, d: 0.40 }],
+  // Quarte descendante apaisante.
+  [{ f: 880, t: 0,    d: 0.28 }, { f: 659, t: 0.20, d: 0.42 }],
+  // Sol-do-mi-sol triomphal.
+  [{ f: 392, t: 0,    d: 0.18 }, { f: 523, t: 0.14, d: 0.18 },
+   { f: 659, t: 0.28, d: 0.18 }, { f: 784, t: 0.42, d: 0.45 }],
+];
+
+// Chime doux : fin de repos. v2 — choisi parmi 5 mélodies + gain renforcé.
 function playChime() {
   try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    const ctx = new AC();
-    const playNote = (freq, start, dur) => {
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      osc.type = 'sine'; osc.frequency.value = freq;
-      g.gain.setValueAtTime(0.0001, ctx.currentTime + start);
-      g.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + start + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + dur);
-      osc.connect(g); g.connect(ctx.destination);
-      osc.start(ctx.currentTime + start);
-      osc.stop(ctx.currentTime + start + dur + 0.05);
-    };
-    playNote(660, 0, 0.35);
-    playNote(880, 0.15, 0.45);
-    setTimeout(() => { try { ctx.close(); } catch (_) {} }, 1000);
-    if (navigator.vibrate) try { navigator.vibrate(120); } catch (_) {}
+    const { ctx, dest } = _newAudioCtx();
+    const mel = _CHIME_MELODIES[Math.floor(Math.random() * _CHIME_MELODIES.length)];
+    const peak = 0.34; // ~1.9× v1
+    let end = 0;
+    for (const n of mel) {
+      // Voix sinus principale + une harmonique douce pour la rondeur.
+      _voice(ctx, dest, 'sine',     n.f,       n.t, n.d, peak);
+      _voice(ctx, dest, 'triangle', n.f * 2.0, n.t, n.d * 0.7, peak * 0.25);
+      end = Math.max(end, n.t + n.d);
+    }
+    setTimeout(() => { try { ctx.close(); } catch (_) {} }, (end + 0.3) * 1000);
+    if (navigator.vibrate) try { navigator.vibrate([180, 60, 120]); } catch (_) {}
   } catch (_) {}
 }
 
@@ -5768,8 +7228,17 @@ function stopAudio(ref) {
 // Each returns a Promise; resolve when user completes or skips.
 
 // Countdown with beep at 0 → user presses STOP as fast as possible.
-// resolve({reactionMs, held, dropped}) where held = true if user went to the end,
-// dropped = true if user bailed out before timer ended.
+// resolve({reactionMs, held, dropped, reactionType}) where held = true if user
+// went to the end, dropped = true if user bailed out before timer ended.
+//
+// reactionType :
+//   'stop'  → mesure classique (téléphone à portée, on stoppe vite)
+//   'getup' → exos au sol (gainage, hollow, superman, sideplank) : la
+//             consigne devient « relève-toi puis tape ». reactionMs capture
+//             alors le temps de récupération posturale, qui est en pratique
+//             un meilleur proxy de la fatigue neuro/musculaire que le
+//             simple temps de pression. Le champ reste reactionMs pour ne
+//             pas casser les agrégats existants (aggReactionMs).
 function runEffortTimer(e) {
   return new Promise(resolve => {
     show('viewTimer');
@@ -5780,9 +7249,18 @@ function runEffortTimer(e) {
     const stopBtn = document.getElementById('timerStop');
     const skipBtn = document.getElementById('timerSkip');
 
+    // Détection "exo au sol" : flag explicite sur la lib (id:'gainage',
+    // 'hollow', 'sideplank', 'superman'). Pour les snacks/rééduc on retombe
+    // sur le sens classique faute de métadonnée.
+    const lib = (typeof EX_BY_ID !== 'undefined') ? EX_BY_ID[e.id] : null;
+    const isFloor = !!(lib && lib.floor);
+    const reactionType = isFloor ? 'getup' : 'stop';
+
     card.classList.remove('flash-red');
     label.textContent = `${e.name} — tiens !`;
-    hint.textContent = 'Quand ça bip, appuie vite sur STOP.';
+    hint.textContent = isFloor
+      ? 'Quand ça bip, relève-toi vite puis appuie.'
+      : 'Quand ça bip, appuie vite sur STOP.';
     stopBtn.textContent = 'J\'ai lâché';
     stopBtn.className = 'sec w-full';
     stopBtn.style.padding = '18px'; stopBtn.style.fontSize = '18px';
@@ -5807,10 +7285,17 @@ function runEffortTimer(e) {
       if (left <= 0) {
         clearInterval(interval);
         card.classList.add('flash-red');
-        label.textContent = '⏰ STOP !';
-        val.textContent = 'BIP';
-        hint.textContent = 'Appuie vite !';
-        stopBtn.textContent = 'STOP';
+        if (isFloor) {
+          label.textContent = '⏰ DEBOUT !';
+          val.textContent = 'BIP';
+          hint.textContent = 'Relève-toi et tape dès que tu es debout.';
+          stopBtn.textContent = 'Je suis debout';
+        } else {
+          label.textContent = '⏰ STOP !';
+          val.textContent = 'BIP';
+          hint.textContent = 'Appuie vite !';
+          stopBtn.textContent = 'STOP';
+        }
         stopBtn.className = 'ko w-full';
         beepAt = performance.now();
         playAlarmBeep(audioRef);
@@ -5821,14 +7306,14 @@ function runEffortTimer(e) {
       if (beepAt === null) {
         // dropped early
         cleanup();
-        resolve({reactionMs: null, held: false, dropped: true, heldSecs: e.reps - left});
+        resolve({reactionMs: null, held: false, dropped: true, heldSecs: e.reps - left, reactionType});
       } else {
         const r = performance.now() - beepAt;
         cleanup();
-        resolve({reactionMs: Math.round(r), held: true, dropped: false, heldSecs: e.reps});
+        resolve({reactionMs: Math.round(r), held: true, dropped: false, heldSecs: e.reps, reactionType});
       }
     };
-    skipBtn.onclick = () => { cleanup(); resolve({reactionMs: null, held: false, dropped: false, heldSecs: 0}); };
+    skipBtn.onclick = () => { cleanup(); resolve({reactionMs: null, held: false, dropped: false, heldSecs: 0, reactionType}); };
   });
 }
 
@@ -6058,6 +7543,157 @@ function runRestTimer(secs) {
   });
 }
 
+/* =================== PROGRAMME D'ÉTIREMENT (FLOW CHRONO) ===================
+ *
+ * Itère sur la liste de postures produite par buildStretchProgram.
+ *
+ * Pour chaque posture :
+ *   - Si perSide : 2 phases (Gauche → Droite), chacune chronométrée dur sec
+ *   - Sinon       : une seule phase chronométrée dur sec
+ *
+ * Pendant le décompte :
+ *   - 5/3/2/1s : tick sonore (playTick)
+ *   - 0s        : chime + bascule auto vers la phase ou la posture suivante
+ *
+ * Contrôles utilisateur :
+ *   - "Passer" : skippe la phase en cours (et passe à la suivante)
+ *   - "Arrêter" : abandonne le programme (résout la promise)
+ *
+ * UI : réutilise #viewTimer (label, val, hint, card, stopBtn, skipBtn) avec
+ * un overlay en haut indiquant la progression "Étirement 3/5". Pas besoin
+ * d'une vue dédiée — la séance est finie, ce flow remplace runRestTimer
+ * dans le contexte cooldown.
+ */
+async function runStretchProgram(list) {
+  if (!Array.isArray(list) || list.length === 0) return;
+  const total = list.length;
+
+  // Étirement n°i, optionnellement côté (G/D). Résout { skipped, stopped }.
+  const runOne = (item, idx, sideLabel) => new Promise(resolve => {
+    show('viewTimer');
+    const val = document.getElementById('timerVal');
+    const label = document.getElementById('timerLabel');
+    const hint = document.getElementById('timerHint');
+    const card = document.getElementById('timerCard');
+    const stopBtn = document.getElementById('timerStop');
+    const skipBtn = document.getElementById('timerSkip');
+
+    card.classList.remove('flash-red');
+    card.classList.remove('flash-green');
+    const sideStr = sideLabel ? ` · ${sideLabel}` : '';
+    label.textContent = `🧘 ${item.name}${sideStr}`;
+    hint.textContent = item.cue;
+    val.textContent = item.dur;
+    stopBtn.textContent = 'Passer';
+    stopBtn.className = 'sec w-full';
+    stopBtn.style.padding = '18px'; stopBtn.style.fontSize = '18px';
+    skipBtn.textContent = 'Arrêter le programme';
+
+    // Petit overlay de progression injecté dans timerLabel (pas un nouvel
+    // élément DOM — on évite de modifier l'HTML). Format : "(3/7)".
+    label.textContent = `🧘 (${idx + 1}/${total}) ${item.name}${sideStr}`;
+
+    let deadline = Date.now() + item.dur * 1000;
+    let interval = null;
+    const tickedAt = new Set();
+    let chimed = false;
+    let wakeLock = null;
+
+    const acquireWakeLock = async () => {
+      try {
+        if (navigator.wakeLock && navigator.wakeLock.request) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch (_) {}
+    };
+    const releaseWakeLock = () => {
+      if (wakeLock && wakeLock.release) {
+        try { wakeLock.release(); } catch (_) {}
+      }
+      wakeLock = null;
+    };
+    acquireWakeLock();
+
+    const onVis = () => {
+      if (!document.hidden) { acquireWakeLock(); render(); }
+    };
+    document.addEventListener('visibilitychange', onVis);
+
+    const cleanup = (result) => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVis);
+      releaseWakeLock();
+      stopBtn.onclick = null;
+      skipBtn.onclick = null;
+      resolve(result);
+    };
+
+    const render = () => {
+      const left = Math.ceil((deadline - Date.now()) / 1000);
+      val.textContent = Math.max(0, left);
+
+      if (left <= 5 && left > 0 && !tickedAt.has(left)) {
+        tickedAt.add(left);
+        playTick(900 + (5 - left) * 80);
+      }
+      if (left <= 0 && !chimed) {
+        chimed = true;
+        card.classList.add('flash-green');
+        playChime();
+        // Petit délai pour laisser le chime jouer avant d'enchaîner.
+        setTimeout(() => cleanup({ skipped: false, stopped: false }), 350);
+      }
+    };
+
+    interval = setInterval(render, 200);
+    render();
+
+    stopBtn.onclick = () => cleanup({ skipped: true, stopped: false });
+    skipBtn.onclick = () => cleanup({ skipped: false, stopped: true });
+  });
+
+  // Itération sur les postures. Pour les unilatérales : G puis D.
+  for (let i = 0; i < list.length; i++) {
+    const it = list[i];
+    if (it.perSide) {
+      const r1 = await runOne(it, i, 'Gauche');
+      if (r1.stopped) return { stopped: true };
+      // Petite pause de transition côté droit (1.2s) — déjà couvert par le
+      // chime, donc on enchaîne directement.
+      const r2 = await runOne(it, i, 'Droite');
+      if (r2.stopped) return { stopped: true };
+    } else {
+      const r = await runOne(it, i, null);
+      if (r.stopped) return { stopped: true };
+    }
+  }
+
+  // Final : on flashe vert avec un message et un bouton retour.
+  return await new Promise(resolve => {
+    show('viewTimer');
+    const val = document.getElementById('timerVal');
+    const label = document.getElementById('timerLabel');
+    const hint = document.getElementById('timerHint');
+    const card = document.getElementById('timerCard');
+    const stopBtn = document.getElementById('timerStop');
+    const skipBtn = document.getElementById('timerSkip');
+    card.classList.add('flash-green');
+    label.textContent = '🌿 Programme terminé';
+    hint.textContent = 'Bien joué. Hydrate-toi et passe au bilan.';
+    val.textContent = '✓';
+    stopBtn.textContent = 'Continuer';
+    stopBtn.className = 'ok w-full';
+    skipBtn.textContent = '';
+    skipBtn.style.display = 'none';
+    playChime();
+    stopBtn.onclick = () => {
+      stopBtn.onclick = null;
+      skipBtn.style.display = '';
+      resolve({ stopped: false });
+    };
+  });
+}
+
 /* =================== SET LOGGING (immersive flow) =================== */
 // Called from the focus card. Drives: log inputs → reaction test → tap test → rest → advance.
 async function logSet(i, k) {
@@ -6067,11 +7703,25 @@ async function logSet(i, k) {
   haptic(HAPTIC.set);
   const e = live.s.exos[i];
   let reps, weight, held = null, heldSecs = null, dropped = null, reactionMs = null, tapMs = null;
+  // 'stop' (test classique) ou 'getup' (temps de se relever sur exo au sol).
+  // Renseigné par runEffortTimer pour les exos timed avec lib.floor === true.
+  let reactionType = null;
+
+  // Capture du côté travaillé (exos unilatéraux). Lecture AVANT le timer
+  // d'effort parce que le bouton focusSideRow disparaît dès qu'on bascule
+  // sur viewTimer / viewTap.
+  let side = null;
+  const _lib = EX_BY_ID[e.id];
+  if (_lib && _lib.unilateral) {
+    const sel = document.querySelector('#focusSideRow .chip.on');
+    side = sel ? sel.dataset.side : null;
+  }
 
   if (e.timed) {
     // Timed exercise: beep at end of the effort → STOP = reaction under peak fatigue.
     const out = await runEffortTimer(e);
     held = out.held; heldSecs = out.heldSecs; dropped = out.dropped; reactionMs = out.reactionMs;
+    reactionType = out.reactionType || 'stop';
     reps = heldSecs;
     weight = null;
   } else {
@@ -6088,6 +7738,7 @@ async function logSet(i, k) {
     // Reaction test IMMEDIATELY after the effort — captures acute CNS fatigue.
     const out = await runReactTest();
     reactionMs = out.reactionMs;
+    reactionType = 'stop';
   }
 
   // Tap test: second CNS/fine-motor check.
@@ -6107,8 +7758,34 @@ async function logSet(i, k) {
     reps, weight,
     held, heldSecs, dropped,
     reactionMs, tapMs,
+    // 'stop' = test classique post-effort, 'getup' = temps pour se relever
+    // après un exo au sol (gainage etc.). Permet, dans l'analyse long terme,
+    // de comparer reactionMs sur des bases homogènes.
+    reactionType,
+    // Côté travaillé pour les exos unilatéraux : 'L' (gauche), 'R' (droite),
+    // 'B' (les deux). null pour les exos bilatéraux. Permet d'afficher après
+    // coup les déséquilibres G/D dans le bilan.
+    side,
   };
   live.sets.push(record);
+
+  // ---- Propagation du poids modifié vers le prochain tour --------------
+  // Si l'utilisateur a saisi une charge différente de ce que prévoyait la
+  // séance, on patche `e.weight` pour que :
+  //   - en mode circuit, le tour suivant de ce même exo affiche le poids
+  //     ajusté (et non la valeur initiale obsolète),
+  //   - en mode séries groupées, les séries suivantes du même exo héritent
+  //     du nouveau poids,
+  //   - en cas de pause/reprise, la session sauvegardée garde la trace.
+  // On ne touche pas aux exos timed (pas de notion de charge).
+  if (!e.timed && weight != null && weight !== e.weight) {
+    e.weight = weight;
+    // live.s === S.currentSession (référence) → la mutation est persistée
+    // via queueSave côté questionnaire ou via le save périodique. On force
+    // une sauvegarde immédiate ici pour ne pas perdre l'info si l'utilisateur
+    // met la séance en pause juste après.
+    queueSave();
+  }
 
   // Détection d'anomalie bayésienne — non bloquante, juste un toast
   // informatif si le set sort de l'intervalle prédit (|z| > 2.5). On
@@ -6172,21 +7849,47 @@ function openQuestion() {
   setRange('qEnergy', 'qEnergyVal', 3, 5,  FIVE_LABELS, 'énergie');
   setRange('qMood',   'qMoodVal',   3, 5,  FIVE_LABELS, 'humeur');
   document.getElementById('qNote').value = '';
+  // RIR (Zourdos 2016) — slider optionnel, défaut -1 ("non renseigné").
+  // Si rempli, écrase qRpe via Science.rirToRpe lors du submit.
+  const qRir = document.getElementById('qRir');
+  const qRirVal = document.getElementById('qRirVal');
+  if (qRir && qRirVal) {
+    qRir.value = -1; qRirVal.textContent = 'non renseigné';
+    qRir.oninput = () => {
+      const r = +qRir.value;
+      if (r < 0) { qRirVal.textContent = 'non renseigné'; return; }
+      const labels = ['échec (RPE 10)', '1 rep (RPE 9)', '2 reps (RPE 8)',
+                      '3 reps (RPE 7)', '4 reps (RPE 6)', '5+ reps (RPE ≤6)'];
+      qRirVal.textContent = `${r} → ${labels[r] || ''}`;
+    };
+  }
 }
 
 document.getElementById('qSubmit').addEventListener('click', () => {
   if (!live) { openHome(); return; } // guard: no live session to save bilan against
-  const rpe = +document.getElementById('qRpe').value;
+  let rpe = +document.getElementById('qRpe').value;
   const energy = +document.getElementById('qEnergy').value;
   const mood = +document.getElementById('qMood').value;
   const note = document.getElementById('qNote').value.trim().slice(0, 500);
   const pains = readChips('qPain');
+  // RIR optionnel — si rempli (>=0), écrase le RPE via Science.rirToRpe.
+  // On garde la valeur RIR aussi dans le record pour les analyses futures.
+  let rir = null;
+  const qRirEl = document.getElementById('qRir');
+  if (qRirEl) {
+    const rv = +qRirEl.value;
+    if (rv >= 0 && window.Science && typeof window.Science.rirToRpe === 'function') {
+      rir = rv;
+      const derivedRpe = window.Science.rirToRpe(rv);
+      if (derivedRpe != null) rpe = derivedRpe;
+    }
+  }
   const rec = {
     id: live.s.id, date: new Date().toISOString(), title: live.s.title,
     rotIdx: live.s.rotIdx,
     exos: live.s.exos.map(e => ({id:e.id, name:e.name, sets:e.sets, reps:e.reps, weight:e.weight, timed:!!e.timed})),
     sets: live.sets,
-    rpe, energy, mood, note, pains,
+    rpe, rir, energy, mood, note, pains,
     aggReactionMs: avg(live.sets.map(s => s.reactionMs).filter(x => x != null)),
     aggTapMs: avg(live.sets.map(s => s.tapMs).filter(x => x != null)),
     formBefore: S.formScore,
@@ -6248,7 +7951,14 @@ function adapt(rec) {
 // Renders a minimal SVG line chart. Pure server-independent.
 function sparkline(values, opts) {
   opts = Object.assign({width: 260, height: 54, color: '#26408b', fill: true}, opts || {});
-  if (!values || values.length < 2) return `<svg width="${opts.width}" height="${opts.height}"></svg>`;
+  // SVG responsive : viewBox fixe + width:100% pour suivre la largeur réelle
+  // du conteneur (card-mini fait 220px mais avec 14px de padding → ~192px
+  // de contenu utile, donc l'ancien width="220" fixe débordait à droite).
+  // max-width plafonne pour ne pas étirer au-delà des proportions voulues.
+  const svgStyle = `display:block;width:100%;height:auto;max-width:${opts.width}px`;
+  if (!values || values.length < 2) {
+    return `<svg viewBox="0 0 ${opts.width} ${opts.height}" style="${svgStyle}"></svg>`;
+  }
   const w = opts.width, h = opts.height, pad = 4;
   const min = Math.min(...values), max = Math.max(...values);
   const rng = max - min || 1;
@@ -6263,7 +7973,7 @@ function sparkline(values, opts) {
     ? `<path d="${d} L${pts[pts.length-1][0].toFixed(1)},${h-pad} L${pts[0][0].toFixed(1)},${h-pad} Z" fill="${opts.color}" fill-opacity="0.15"/>`
     : '';
   const dots = pts.map(p => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2" fill="${opts.color}"/>`).join('');
-  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block">
+  return `<svg viewBox="0 0 ${w} ${h}" style="${svgStyle}">
     ${area}
     <path d="${d}" fill="none" stroke="${opts.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
     ${dots}
@@ -6647,8 +8357,15 @@ function renderHistoryList() {
         </div>
         <div class="empty-state-title">Aucune séance encore</div>
         <div class="empty-state-msg">Lance ta première séance — tu verras ici tout ton historique avec les charges, le RPE et les ajustements.</div>
-        <button type="button" class="magenta" onclick="document.getElementById('fabStart').click()">Démarrer ma première séance</button>
+        <button type="button" class="magenta" id="emptyStateStartBtn">Démarrer ma première séance</button>
       </div>`;
+    const startBtn = document.getElementById('emptyStateStartBtn');
+    if (startBtn) {
+      startBtn.addEventListener('click', () => {
+        const fab = document.getElementById('fabStart');
+        if (fab) fab.click();
+      });
+    }
     return;
   }
   el.innerHTML = S.history.slice().reverse().map(h => {
