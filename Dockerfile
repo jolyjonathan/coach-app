@@ -28,7 +28,7 @@
 # Procédure recommandée : `make pin-images` (cf. scripts/pin-images.sh) une
 # fois par mois ou avant chaque release. Les digests vivent en commit signé,
 # pas dans le runtime.
-FROM golang:1.22-alpine AS builder
+FROM golang:1.26-alpine AS builder
 WORKDIR /src
 
 # Cache les modules avant le source (couches Docker réutilisables).
