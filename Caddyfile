@@ -1,0 +1,36 @@
+# =============================================================
+# Caddyfile — TLS automatique pour Coach Adaptatif
+# =============================================================
+# REMPLACE jjoly.eu PAR TON DOMAINE avant le premier `docker compose up`.
+#
+# Caddy gère automatiquement :
+#   - Cert Let's Encrypt (challenge HTTP-01 sur port 80)
+#   - Renouvellement tous les 60 jours
+#   - HTTP→HTTPS redirect global
+#   - HTTP/2 + HTTP/3
+#   - Compression zstd + gzip + brotli
+#   - Headers X-Forwarded-* corrects (lus par l'app via COACH_TRUST_PROXY=1)
+# =============================================================
+
+jjoly.eu {
+    # Proxy vers le container coach-app sur le réseau Docker interne.
+    # Docker DNS résout "coach-app" en l'IP du container côté coach-net.
+    reverse_proxy coach-app:8080
+
+    # Compression à la volée — Caddy choisit le meilleur encodage.
+    encode zstd gzip
+
+    # Logs JSON + rotation auto.
+    log {
+        output file /data/access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+        format json
+    }
+}
+
+# Optionnel : alias www → apex.
+# www.jjoly.eu {
+#     redir https://jjoly.eu{uri} permanent
+# }

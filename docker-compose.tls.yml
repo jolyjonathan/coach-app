@@ -1,0 +1,118 @@
+# =============================================================
+# Coach Adaptatif — docker-compose.tls.yml
+# =============================================================
+# VARIANTE de production : Caddy en sidecar + Let's Encrypt automatique.
+# À utiliser à la place de docker-compose.yml pour une exposition Internet.
+#
+# Prérequis :
+#   - Un nom de domaine (ex: coach.exemple.com) qui pointe (A/AAAA record)
+#     vers l'IP publique de ton serveur. Vérifie : `dig +short coach.exemple.com`.
+#   - Ports 80 et 443 ouverts dans le firewall (sudo ufw allow 80,443/tcp).
+#   - Aucun autre process sur 80/443 (pas de nginx système actif :
+#     sudo systemctl disable --now nginx).
+#
+# Setup :
+#   1. cp .env.example .env  &&  $EDITOR .env   (au minimum COACH_TOKEN_KEY)
+#   2. Édite Caddyfile : remplace "jjoly.eu" par ton vrai domaine.
+#   3. sudo docker compose -f docker-compose.tls.yml up -d --build
+#   4. Attends ~30s que Caddy obtienne le certif Let's Encrypt :
+#        sudo docker compose -f docker-compose.tls.yml logs caddy | grep -i certificate
+#   5. Ouvre https://<ton-domaine> → page de login.
+#
+# Bénéfices par rapport au docker-compose.yml HTTP nu :
+#   - TLS 1.3 + cert renouvelé auto tous les 60j (Let's Encrypt)
+#   - HTTP→HTTPS redirect global automatique
+#   - Cookies __Host-coach_sid (durcissement préfixe) + Secure flag
+#   - HSTS activé côté Coach Adaptatif (détection via COACH_TRUST_PROXY=1)
+#   - HTTP/2 + HTTP/3 + compression zstd/gzip/brotli
+# =============================================================
+
+services:
+  coach-app:
+    build: .
+    image: coach-app:latest
+    # Force le build local depuis le Dockerfile du projet. Évite le warning
+    # cosmétique "pull access denied" au premier `up`.
+    pull_policy: build
+    container_name: coach-app
+    restart: unless-stopped
+    expose:
+      # Pas de "ports:" → le container n'est PAS exposé sur le host,
+      # uniquement accessible via le réseau Docker interne (Caddy → coach).
+      - "8080"
+    volumes:
+      - coach_data:/data
+    environment:
+      COACH_LISTEN:               0.0.0.0:8080
+      COACH_DATA:                 /data
+      COACH_PUBLIC:               /app/public
+      # IMPORTANT : 1 derrière Caddy. Sans ça, l'app ne détecte pas le HTTPS
+      # → ni Secure cookies, ni HSTS, ni __Host- prefix. Caddy met
+      # X-Forwarded-Proto: https que l'app lit via isHTTPS().
+      COACH_TRUST_PROXY:          1
+      COACH_ALLOW_REGISTRATION:   ${COACH_ALLOW_REGISTRATION:-0}
+      COACH_2FA_REQUIRED:         ${COACH_2FA_REQUIRED:-1}
+      COACH_TOKEN_KEY:            "${COACH_TOKEN_KEY:?missing in .env, generate with: openssl rand -hex 32}"
+      COACH_ADMIN_EMAIL:          ${COACH_ADMIN_EMAIL:-}
+      COACH_ADMIN_PASSWORD:       ${COACH_ADMIN_PASSWORD:-}
+      # Strava (optionnel — vides = bouton désactivé)
+      STRAVA_CLIENT_ID:           ${STRAVA_CLIENT_ID:-}
+      STRAVA_CLIENT_SECRET:       ${STRAVA_CLIENT_SECRET:-}
+      STRAVA_VERIFY_TOKEN:        ${STRAVA_VERIFY_TOKEN:-}
+      STRAVA_WEBHOOK_URL:         ${STRAVA_WEBHOOK_URL:-}
+      STRAVA_REDIRECT_URI:        ${STRAVA_REDIRECT_URI:-}
+    healthcheck:
+      test: ["CMD", "/app/coach-app", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+        reservations:
+          memory: 64M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - coach-net
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: coach-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"          # Challenge ACME HTTP-01 + redirect HTTPS
+      - "443:443"        # TLS
+      - "443:443/udp"    # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # IMPORTANT : caddy_data persiste les certificats Let's Encrypt.
+      # Si tu perds ce volume, Caddy doit ré-obtenir un certif (limite ACME = 5/sem/domaine).
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - coach-net
+    depends_on:
+      - coach-app
+
+volumes:
+  coach_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  coach-net:
+    driver: bridge
