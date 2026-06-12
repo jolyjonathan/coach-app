@@ -30,6 +30,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -55,7 +57,7 @@ var physioMu sync.Mutex
 // BodyMass, BodyFat) sont stockés pour usage futur (calcul de charge plus
 // fin, dashboard détaillé) — actuellement seulement persistés sans calcul.
 type PhysioEntry struct {
-	Date  string  `json:"date"`            // ISO-8601 YYYY-MM-DD
+	Date string `json:"date"` // ISO-8601 YYYY-MM-DD
 
 	// Core — utilisés par les modèles statistiques :
 	HRV   float64 `json:"hrv,omitempty"`   // ms (RMSSD ou similar)
@@ -105,126 +107,119 @@ func fetchOuraSleep(token, startDate, endDate string) ([]PhysioEntry, error) {
 	}
 	var payload struct {
 		Data []struct {
-			Day                 string  `json:"day"`
-			AverageHRV          float64 `json:"average_hrv"`
-			TotalSleepDuration  float64 `json:"total_sleep_duration"` // seconds
-			AverageHeartRate    float64 `json:"average_heart_rate"`
-			LowestHeartRate     float64 `json:"lowest_heart_rate"`
+			Day                string  `json:"day"`
+			AverageHRV         float64 `json:"average_hrv"`
+			TotalSleepDuration float64 `json:"total_sleep_duration"` // seconds
+			AverageHeartRate   float64 `json:"average_heart_rate"`
+			LowestHeartRate    float64 `json:"lowest_heart_rate"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("oura parse: %w", err)
 	}
 	// Agrégation par jour : un user peut avoir plusieurs sleep periods
-	// (sieste + nuit). On prend le HRV moyen pondéré par durée et le RHR
-	// le plus bas (plus représentatif du repos profond).
-	byDay := map[string]*PhysioEntry{}
+	// (sieste + nuit). HRV = moyenne pondérée par durée (Audit F3), Sleep =
+	// somme des durées, RHR = le plus bas observé (plus représentatif du
+	// repos profond).
+	type sleepAgg struct {
+		hrvWeighted float64 // Σ(hrv · durée)
+		hrvWeight   float64 // Σ(durée des sessions avec hrv)
+		hrvSimple   float64 // Σ(hrv) — fallback si toutes les durées sont nulles
+		hrvN        float64
+		sleepHours  float64
+		rhrMin      float64
+	}
+	byDay := map[string]*sleepAgg{}
 	for _, s := range payload.Data {
 		if s.Day == "" {
 			continue
 		}
-		e := byDay[s.Day]
-		if e == nil {
-			e = &PhysioEntry{Date: s.Day}
-			byDay[s.Day] = e
+		a := byDay[s.Day]
+		if a == nil {
+			a = &sleepAgg{}
+			byDay[s.Day] = a
 		}
 		if s.AverageHRV > 0 {
-			// Moyenne pondérée : on garde la plus récente/longue session.
-			if e.HRV == 0 || s.TotalSleepDuration > 0 {
-				e.HRV = s.AverageHRV
+			// Pondération par durée de la session : une nuit complète pèse plus
+			// qu'une sieste. Si la durée est inconnue (0), on alimente quand même
+			// le fallback moyenne simple pour ne pas perdre la mesure.
+			if s.TotalSleepDuration > 0 {
+				a.hrvWeighted += s.AverageHRV * s.TotalSleepDuration
+				a.hrvWeight += s.TotalSleepDuration
 			}
+			a.hrvSimple += s.AverageHRV
+			a.hrvN++
 		}
 		if s.TotalSleepDuration > 0 {
-			e.Sleep += s.TotalSleepDuration / 3600.0 // sec → heures
+			a.sleepHours += s.TotalSleepDuration / 3600.0 // sec → heures
 		}
 		// RHR : prendre le plus bas observé (= vrai resting).
-		if s.LowestHeartRate > 0 && (e.RHR == 0 || s.LowestHeartRate < e.RHR) {
-			e.RHR = s.LowestHeartRate
+		if s.LowestHeartRate > 0 && (a.rhrMin == 0 || s.LowestHeartRate < a.rhrMin) {
+			a.rhrMin = s.LowestHeartRate
 		}
 	}
 	out := make([]PhysioEntry, 0, len(byDay))
-	for _, e := range byDay {
-		out = append(out, *e)
+	for day, a := range byDay {
+		e := PhysioEntry{Date: day}
+		if a.hrvWeight > 0 {
+			e.HRV = a.hrvWeighted / a.hrvWeight // vraie moyenne pondérée
+		} else if a.hrvN > 0 {
+			e.HRV = a.hrvSimple / a.hrvN // fallback : durées toutes inconnues
+		}
+		e.Sleep = a.sleepHours
+		e.RHR = a.rhrMin
+		out = append(out, e)
 	}
 	return out, nil
 }
 
-// fetchOuraReadiness — endpoint daily_readiness qui inclut hrv_balance.
-// On l'utilise comme fallback si sleep n'a pas retourné de HRV utilisable.
-func fetchOuraReadiness(token, startDate, endDate string) ([]PhysioEntry, error) {
-	url := fmt.Sprintf("%s/usercollection/daily_readiness?start_date=%s&end_date=%s",
-		ouraBase, startDate, endDate)
-	req, _ := http.NewRequest(http.MethodGet, url, nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/json")
-	resp, err := httpClientPhysio.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("oura readiness status %d", resp.StatusCode)
-	}
-	var payload struct {
-		Data []struct {
-			Day                   string  `json:"day"`
-			TemperatureDeviation  float64 `json:"temperature_deviation"`
-			Contributors          struct {
-				HRVBalance         int `json:"hrv_balance"`
-				RestingHeartRate   int `json:"resting_heart_rate"`
-				Sleep              int `json:"sleep"`
-				PreviousNight      int `json:"previous_night"`
-			} `json:"contributors"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
-		return nil, err
-	}
-	// daily_readiness ne contient pas les valeurs absolues HRV/RHR — juste
-	// des scores 0-100. On ne l'utilise pas pour les valeurs principales,
-	// uniquement pour valider la connexion. Retourne array vide.
-	return nil, nil
-}
+// Audit F2 : fetchOuraReadiness a été retirée. Elle était documentée comme un
+// « fallback HRV » mais l'endpoint daily_readiness d'Oura ne renvoie que des
+// scores 0-100 (hrv_balance, resting_heart_rate…), PAS les valeurs absolues
+// HRV/RHR dont nos modèles ont besoin. La fonction retournait donc toujours
+// (nil, nil) et n'était appelée nulle part — du code mort trompeur. La source
+// de vérité pour HRV/RHR reste fetchOuraSleep (endpoint /usercollection/sleep).
 
 // parseAppleHealthAutoExport accepte le format JSON émis par l'app
 // "Health Auto Export" (https://www.healthyapps.dev/auto-export) qui est
 // la voie standard pour pousser des données Apple Health vers un webhook.
 //
 // Schéma type :
-//   {
-//     "data": {
-//       "metrics": [
-//         {
-//           "name":  "heart_rate_variability",
-//           "units": "ms",
-//           "data":  [ { "date": "2026-04-30 02:00:00 +0000", "qty": 52.3 }, ... ]
-//         },
-//         { "name": "sleep_analysis", "data": [...] },
-//         ...
-//       ]
-//     }
-//   }
+//
+//	{
+//	  "data": {
+//	    "metrics": [
+//	      {
+//	        "name":  "heart_rate_variability",
+//	        "units": "ms",
+//	        "data":  [ { "date": "2026-04-30 02:00:00 +0000", "qty": 52.3 }, ... ]
+//	      },
+//	      { "name": "sleep_analysis", "data": [...] },
+//	      ...
+//	    ]
+//	  }
+//	}
 //
 // On agrège par jour ISO (YYYY-MM-DD).
 //
 // Métriques supportées (le `name` exporté par AHAE est listé) :
 //
-//   Core (utilisés par les modèles) :
-//     heart_rate_variability,                                → HRV (moyenne, ms)
-//     heart_rate_variability_sdnn,
-//       heart_rate_variability_rmssd                          alias acceptés
-//     sleep_analysis                                          → Sleep (somme h)
-//     resting_heart_rate                                      → RHR (min, bpm)
+//	Core (utilisés par les modèles) :
+//	  heart_rate_variability,                                → HRV (moyenne, ms)
+//	  heart_rate_variability_sdnn,
+//	    heart_rate_variability_rmssd                          alias acceptés
+//	  sleep_analysis                                          → Sleep (somme h)
+//	  resting_heart_rate                                      → RHR (min, bpm)
 //
-//   Étendus (stockés pour analyse future) :
-//     active_energy_burned, active_energy                     → ActiveEnergy (kcal)
-//     vo2_max                                                  → VO2Max (ml/kg/min)
-//     step_count, steps                                        → Steps
-//     heart_rate (mean over period)                            → AvgHR (bpm)
-//     body_mass, weight                                        → BodyMassKg
-//     body_fat_percentage                                      → BodyFatPct (0-100)
-//     respiratory_rate                                         → RespRate
-//     mindful_session, mindfulness                             → MindfulMin
+//	Étendus (stockés pour analyse future) :
+//	  active_energy_burned, active_energy                     → ActiveEnergy (kcal)
+//	  vo2_max                                                  → VO2Max (ml/kg/min)
+//	  step_count, steps                                        → Steps
+//	  heart_rate (mean over period)                            → AvgHR (bpm)
+//	  body_mass, weight                                        → BodyMassKg
+//	  body_fat_percentage                                      → BodyFatPct (0-100)
+//	  respiratory_rate                                         → RespRate
+//	  mindful_session, mindfulness                             → MindfulMin
 //
 // Toute autre métrique est ignorée silencieusement (pour ne pas spammer
 // les logs). Un futur contributeur peut ajouter une `case` dans le switch
@@ -247,9 +242,9 @@ func parseAppleHealthAutoExport(raw []byte) ([]PhysioEntry, error) {
 	}
 	type aggDay struct {
 		// Core
-		hrvSum, hrvN  float64
-		sleepHours    float64
-		rhrMin        float64 // 0 = pas encore vu
+		hrvSum, hrvN float64
+		sleepHours   float64
+		rhrMin       float64 // 0 = pas encore vu
 		// Étendus (sommes/agrégats par jour)
 		activeEnergyKcal float64 // somme journée
 		vo2MaxMax        float64 // max valeur du jour (vo2 ne change pas dans la journée)
@@ -535,10 +530,10 @@ func isoDayFromAHAE(s string) string {
 }
 
 // computeSyncWindow détermine combien de jours en arrière on fetch, selon :
-//  - override explicite du client (clamp [7, 365])
-//  - lastSync connu : (now - lastSync) + 2 jours d'overlap, clampé [7, 90]
-//  - jamais sync : 30 jours par défaut (utile pour avoir une baseline pour
-//    le score composite readiness qui calcule sur 28j)
+//   - override explicite du client (clamp [7, 365])
+//   - lastSync connu : (now - lastSync) + 2 jours d'overlap, clampé [7, 90]
+//   - jamais sync : 30 jours par défaut (utile pour avoir une baseline pour
+//     le score composite readiness qui calcule sur 28j)
 func computeSyncWindow(u *User, override int) int {
 	if override > 0 {
 		if override < 7 {
@@ -624,9 +619,9 @@ func handlePhysioListIntegrations(w http.ResponseWriter, r *http.Request) {
 		// L'URL est suffisante — pas besoin d'exposer le secret seul.
 		// Le client construit l'URL à partir de l'origine courante.
 		out["webhook"] = map[string]any{
-			"enabled":  true,
-			"path":     fmt.Sprintf("/api/physio/webhook/%s/%s", u.ID, u.PhysioWebhookSecret),
-			"hint":     "POST JSON {date, hrv, sleep, rhr} (single ou array). Secret immutable jusqu'à rotation.",
+			"enabled": true,
+			"path":    fmt.Sprintf("/api/physio/webhook/%s/%s", u.ID, u.PhysioWebhookSecret),
+			"hint":    "POST JSON {date, hrv, sleep, rhr} (single ou array). Secret immutable jusqu'à rotation.",
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"integrations": out})
@@ -732,8 +727,8 @@ func handlePhysioSync(w http.ResponseWriter, r *http.Request) {
 		if derr != nil {
 			errs["oura"] = "token illisible : " + derr.Error()
 			writeJSON(w, http.StatusOK, map[string]any{
-				"entries":  merged, "synced": synced, "errors": errs,
-				"window":   map[string]string{"start": startDate, "end": endDate},
+				"entries": merged, "synced": synced, "errors": errs,
+				"window": map[string]string{"start": startDate, "end": endDate},
 			})
 			return
 		}
@@ -743,6 +738,7 @@ func handlePhysioSync(w http.ResponseWriter, r *http.Request) {
 		} else {
 			merged = append(merged, entries...)
 			synced = append(synced, "oura")
+			metricPhysioSync.Add(1)
 			physioMu.Lock()
 			usersMu.Lock()
 			if u2 := usersByID[uid]; u2 != nil {
@@ -753,14 +749,14 @@ func handlePhysioSync(w http.ResponseWriter, r *http.Request) {
 			}
 			usersMu.Unlock()
 			physioMu.Unlock()
-			go saveUsers()
+			markUsersDirty()
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"entries":  merged,
-		"synced":   synced,
-		"errors":   errs,
-		"window":   map[string]string{"start": startDate, "end": endDate},
+		"entries": merged,
+		"synced":  synced,
+		"errors":  errs,
+		"window":  map[string]string{"start": startDate, "end": endDate},
 	})
 }
 
@@ -783,8 +779,8 @@ func handlePhysioRotateWebhook(w http.ResponseWriter, r *http.Request) {
 	physioMu.Unlock()
 	saveUsers()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":     true,
-		"path":   fmt.Sprintf("/api/physio/webhook/%s/%s", uid, newSecret),
+		"ok":   true,
+		"path": fmt.Sprintf("/api/physio/webhook/%s/%s", uid, newSecret),
 	})
 }
 
@@ -822,15 +818,31 @@ func handlePhysioWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	usersMu.RLock()
 	u := usersByID[uid]
+	// Copie sous le lock — PhysioWebhookSecret / HealthConsent sont mutés par
+	// d'autres handlers sous usersMu (data race sinon).
+	var storedSecret string
+	hasConsent := false
+	if u != nil {
+		storedSecret = u.PhysioWebhookSecret
+		hasConsent = u.HealthConsent != nil && u.HealthConsent.Version == CurrentPrivacyVersion
+	}
 	usersMu.RUnlock()
-	if u == nil || u.PhysioWebhookSecret == "" {
+	if u == nil || storedSecret == "" {
 		// Réponse identique pour un user inexistant ou un user sans webhook
 		// — évite l'oracle "ce uid existe-t-il?".
 		writeErr(w, http.StatusNotFound, "introuvable")
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(secret), []byte(u.PhysioWebhookSecret)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(secret), []byte(storedSecret)) != 1 {
 		writeErr(w, http.StatusForbidden, "secret invalide")
+		return
+	}
+	// RGPD art. 9 : même garde-fou que PUT /api/data (handleSaveData) — on
+	// n'écrit pas de données de santé pour un compte qui n'a pas (re)donné
+	// son consentement explicite à la version courante de la politique. Sans
+	// ce check, le webhook contournait silencieusement la gate de consentement.
+	if !hasConsent {
+		writeErr(w, http.StatusForbidden, "consentement aux données de santé requis")
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 256*1024))
@@ -895,10 +907,13 @@ func handlePhysioWebhook(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusRequestEntityTooLarge, "max 1000 entries / requête")
 		return
 	}
-	// Filtre les entrées invalides (date manquante ou tout vide).
+	// Filtre les entrées invalides (date manquante/malformée ou tout vide).
+	// La date DOIT être un jour ISO strict : chaque date distincte devient une
+	// clé dans body.physio, accepter des chaînes arbitraires permettrait de
+	// faire gonfler le data file avec des clés indéfiniment variées.
 	clean := make([]PhysioEntry, 0, len(entries))
 	for _, e := range entries {
-		if e.Date == "" {
+		if e.Date == "" || !physioDateRe.MatchString(e.Date) {
 			continue
 		}
 		// Au moins un champ non-nul attendu.
@@ -911,6 +926,7 @@ func handlePhysioWebhook(w http.ResponseWriter, r *http.Request) {
 		clean = append(clean, e)
 	}
 	if err := mergePhysioIntoData(uid, clean); err != nil {
+		metricWebhookErr.Add(1)
 		writeErr(w, http.StatusInternalServerError, "écriture impossible")
 		return
 	}
@@ -924,12 +940,16 @@ func handlePhysioWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	usersMu.Unlock()
 	physioMu.Unlock()
-	go saveUsers()
+	markUsersDirty()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"received": len(clean),
 		"ignored":  len(entries) - len(clean),
 	})
 }
+
+// physioDateRe : jour ISO-8601 strict (YYYY-MM-DD) — seul format accepté
+// comme clé d'agrégation dans body.physio.
+var physioDateRe = regexp.MustCompile("^\\d{4}-\\d{2}-\\d{2}$")
 
 // mergePhysioIntoData lit le data file utilisateur, merge les nouvelles
 // entrées physio dans body.physio (replace si même date), et réécrit
@@ -972,25 +992,60 @@ func mergePhysioIntoData(uid string, incoming []PhysioEntry) error {
 			entry = map[string]any{"date": e.Date}
 		}
 		// Core
-		if e.HRV > 0 { entry["hrv"] = e.HRV }
-		if e.Sleep > 0 { entry["sleep"] = e.Sleep }
-		if e.RHR > 0 { entry["rhr"] = e.RHR }
+		if e.HRV > 0 {
+			entry["hrv"] = e.HRV
+		}
+		if e.Sleep > 0 {
+			entry["sleep"] = e.Sleep
+		}
+		if e.RHR > 0 {
+			entry["rhr"] = e.RHR
+		}
 		// Étendus
-		if e.ActiveEnergy > 0 { entry["activeEnergy"] = e.ActiveEnergy }
-		if e.VO2Max > 0 { entry["vo2Max"] = e.VO2Max }
-		if e.Steps > 0 { entry["steps"] = e.Steps }
-		if e.AvgHR > 0 { entry["avgHR"] = e.AvgHR }
-		if e.BodyMassKg > 0 { entry["bodyMassKg"] = e.BodyMassKg }
-		if e.BodyFatPct > 0 { entry["bodyFatPct"] = e.BodyFatPct }
-		if e.RespRate > 0 { entry["respRate"] = e.RespRate }
-		if e.MindfulMin > 0 { entry["mindfulMin"] = e.MindfulMin }
+		if e.ActiveEnergy > 0 {
+			entry["activeEnergy"] = e.ActiveEnergy
+		}
+		if e.VO2Max > 0 {
+			entry["vo2Max"] = e.VO2Max
+		}
+		if e.Steps > 0 {
+			entry["steps"] = e.Steps
+		}
+		if e.AvgHR > 0 {
+			entry["avgHR"] = e.AvgHR
+		}
+		if e.BodyMassKg > 0 {
+			entry["bodyMassKg"] = e.BodyMassKg
+		}
+		if e.BodyFatPct > 0 {
+			entry["bodyFatPct"] = e.BodyFatPct
+		}
+		if e.RespRate > 0 {
+			entry["respRate"] = e.RespRate
+		}
+		if e.MindfulMin > 0 {
+			entry["mindfulMin"] = e.MindfulMin
+		}
 		byDate[e.Date] = entry
 	}
-	out := make([]any, 0, len(byDate))
-	for _, v := range byDate {
-		out = append(out, v)
+	// Cap : même plafond que la validation de PUT /api/data (data.go, audit
+	// M-06). Sans ça, le webhook contournait la limite et pouvait faire
+	// gonfler body.physio indéfiniment (parse JSON de plusieurs MiB à chaque
+	// /api/data). On garde les 2000 dates les plus récentes — le tri
+	// lexicographique équivaut au tri chronologique sur des dates ISO.
+	const maxPhysioEntries = 2000
+	dates := make([]string, 0, len(byDate))
+	for d := range byDate {
+		dates = append(dates, d)
+	}
+	sort.Strings(dates)
+	if len(dates) > maxPhysioEntries {
+		dates = dates[len(dates)-maxPhysioEntries:]
+	}
+	out := make([]any, 0, len(dates))
+	for _, d := range dates {
+		out = append(out, byDate[d])
 	}
 	body["physio"] = out
 	return writeJSONAtomic(path, data, 0o600)
 }
-

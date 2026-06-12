@@ -73,18 +73,11 @@ func TestOTPAuthURL(t *testing.T) {
 		t.Fatal("empty url")
 	}
 	// Must include scheme, secret, issuer.
+	// contains() est défini une seule fois, dans middleware_test.go (helper
+	// partagé du paquet de test) — on le réutilise ici.
 	for _, want := range []string{"otpauth://totp/", "secret=", "issuer=Coach"} {
 		if !contains(u, want) {
 			t.Errorf("URL missing %q: %s", want, u)
 		}
 	}
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

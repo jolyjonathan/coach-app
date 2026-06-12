@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -79,12 +80,34 @@ func accessLog(next http.Handler) http.Handler {
 		start := time.Now()
 		lrw := &logRW{ResponseWriter: w, status: 200}
 		next.ServeHTTP(lrw, r)
-		log.Printf("%s %s %s %d %s", clientIP(r), r.Method, r.URL.Path, lrw.status, time.Since(start))
+		// Audit S1 : le path du webhook physio contient le secret
+		// (/api/physio/webhook/{uid}/{secret}). Le logger tel quel exposerait
+		// un credential réutilisable dans journald / json-file / access.log.
+		// On le caviarde avant d'écrire la ligne.
+		log.Printf("%s %s %s %d %s", clientIP(r), r.Method, redactSensitivePath(r.URL.Path), lrw.status, time.Since(start))
 	})
 }
 
+// redactSensitivePath masque les segments sensibles d'un chemin avant qu'il
+// n'atterrisse dans les logs. Aujourd'hui : le secret du webhook physio.
+// Forme : /api/physio/webhook/{uid}/{secret} → /api/physio/webhook/{uid}/[REDACTED]
+func redactSensitivePath(p string) string {
+	const prefix = "/api/physio/webhook/"
+	if !strings.HasPrefix(p, prefix) {
+		return p
+	}
+	rest := strings.TrimPrefix(p, prefix)
+	// rest = "{uid}/{secret}[/...]" — on garde le uid, on caviarde le reste.
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		return prefix + rest[:i] + "/[REDACTED]"
+	}
+	return p
+}
+
 // Audit L-04 : handler des rapports CSP. Format browser standard :
-//   { "csp-report": { "document-uri", "violated-directive", "blocked-uri", ... } }
+//
+//	{ "csp-report": { "document-uri", "violated-directive", "blocked-uri", ... } }
+//
 // On log juste les champs utiles pour détection — pas de PII utilisateur dedans
 // par construction (CSP ne capture pas le contenu, juste les ressources bloquées).
 // Body capé à 8 KiB (rapport CSP est typiquement < 1 KiB).
@@ -134,6 +157,7 @@ func recoverPanic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
+				metricPanicsRecovered.Add(1)
 				log.Printf("panic %s %s: %v\n%s", r.Method, r.URL.Path, rec, debug.Stack())
 				http.Error(w, "internal error", http.StatusInternalServerError)
 			}

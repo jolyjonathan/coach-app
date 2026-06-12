@@ -182,7 +182,11 @@ func TestDeleteAccount(t *testing.T) {
 		t.Fatalf("pre-delete save: status=%d", save.status)
 	}
 
-	del := doJSON(t, mux, http.MethodPost, "/api/delete-account", nil, cookies, csrf)
+	// delete-account exige le mot de passe courant (défense contre le vol de
+	// session) — on le fournit dans le body.
+	del := doJSON(t, mux, http.MethodPost, "/api/delete-account", map[string]string{
+		"password": "Correct-horse-9",
+	}, cookies, csrf)
 	if del.status != http.StatusOK {
 		t.Fatalf("delete-account: status=%d body=%v", del.status, del.body)
 	}

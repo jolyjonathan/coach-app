@@ -27,9 +27,9 @@ import (
 // dans /run/secrets/coach_token_key et exporter COACH_TOKEN_KEY_FILE=/run/secrets/coach_token_key.
 //
 // Ordre de priorité :
-//   1. <NAME>_FILE non vide → lit le fichier
-//   2. <NAME> non vide       → utilise directement
-//   3. defaultVal (si fourni, sinon "")
+//  1. <NAME>_FILE non vide → lit le fichier
+//  2. <NAME> non vide       → utilise directement
+//  3. defaultVal (si fourni, sinon "")
 func getenvOrFile(name, defaultVal string) string {
 	if path := strings.TrimSpace(os.Getenv(name + "_FILE")); path != "" {
 		b, err := os.ReadFile(path)

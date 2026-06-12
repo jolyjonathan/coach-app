@@ -66,10 +66,10 @@ import (
 )
 
 const (
-	stravaAuthURL    = "https://www.strava.com/oauth/authorize"
-	stravaTokenURL   = "https://www.strava.com/oauth/token"
-	stravaAPIBase    = "https://www.strava.com/api/v3"
-	stravaScopes     = "read,activity:read_all,profile:read_all"
+	stravaAuthURL  = "https://www.strava.com/oauth/authorize"
+	stravaTokenURL = "https://www.strava.com/oauth/token"
+	stravaAPIBase  = "https://www.strava.com/api/v3"
+	stravaScopes   = "read,activity:read_all,profile:read_all"
 	// Marge de sécurité avant l'expiration : on refresh si le token expire
 	// dans moins de 60 secondes (on évite de partir en course avec Strava).
 	stravaRefreshSlack = 60 * time.Second
@@ -470,7 +470,7 @@ func stravaSaveCreds(uid string, creds *stravaCreds) error {
 		return err
 	}
 	u.PhysioTokens["strava"] = encryptToken(string(bundle))
-	go saveUsers()
+	markUsersDirty()
 	return nil
 }
 
@@ -521,7 +521,7 @@ func stravaTouchLastSync(uid string) {
 	}
 	usersMu.Unlock()
 	physioMu.Unlock()
-	go saveUsers()
+	markUsersDirty()
 }
 
 /* ========================================================================
@@ -571,15 +571,16 @@ func stravaWebhookValidate(w http.ResponseWriter, r *http.Request) {
 // d'activité si pertinent.
 //
 // Body type :
-//   {
-//     "aspect_type": "create" | "update" | "delete",
-//     "event_time": 1516126040,
-//     "object_id": 1360128428,            ← activity ID (pour activity events)
-//     "object_type": "activity" | "athlete",
-//     "owner_id": 134815,                 ← athlete ID
-//     "subscription_id": 120475,
-//     "updates": { ... }
-//   }
+//
+//	{
+//	  "aspect_type": "create" | "update" | "delete",
+//	  "event_time": 1516126040,
+//	  "object_id": 1360128428,            ← activity ID (pour activity events)
+//	  "object_type": "activity" | "athlete",
+//	  "owner_id": 134815,                 ← athlete ID
+//	  "subscription_id": 120475,
+//	  "updates": { ... }
+//	}
 //
 // Strava attend une réponse < 2s, donc on répond 200 immédiatement et on
 // fait le fetch dans une goroutine.
@@ -590,10 +591,11 @@ func stravaWebhookEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var ev struct {
-		AspectType string `json:"aspect_type"`
-		ObjectID   int64  `json:"object_id"`
-		ObjectType string `json:"object_type"`
-		OwnerID    int64  `json:"owner_id"`
+		AspectType string            `json:"aspect_type"`
+		ObjectID   int64             `json:"object_id"`
+		ObjectType string            `json:"object_type"`
+		OwnerID    int64             `json:"owner_id"`
+		Updates    map[string]string `json:"updates"`
 	}
 	if err := json.Unmarshal(body, &ev); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON invalide")
@@ -601,9 +603,21 @@ func stravaWebhookEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	// Acquittement immédiat — Strava est patient mais < 2s.
 	w.WriteHeader(http.StatusOK)
+	if ev.ObjectType == "athlete" {
+		// Event athlete : on traite la désautorisation (l'utilisateur a révoqué
+		// l'accès depuis strava.com/settings/apps). Strava envoie alors
+		// updates: {"authorized":"false"}. On purge nos credentials stale pour
+		// ce uid — sinon on garderait un refresh token mort indéfiniment.
+		if ev.AspectType == "update" && ev.Updates["authorized"] == "false" {
+			uid := stravaResolveOwner(ev.OwnerID)
+			if uid != "" {
+				stravaPurgeUser(uid)
+				log.Printf("strava webhook: deauthorization de owner %d (uid=%s) — tokens purgés", ev.OwnerID, uid)
+			}
+		}
+		return
+	}
 	if ev.ObjectType != "activity" {
-		// On ignore les events "athlete" (ex: deauthorization) pour l'instant.
-		// TODO : traiter les deauth pour purger nos tokens stale.
 		return
 	}
 	if ev.AspectType == "delete" {
@@ -630,17 +644,17 @@ func stravaWebhookEvent(w http.ResponseWriter, r *http.Request) {
 
 // stravaActivity est le sous-ensemble du payload v3 qu'on consomme.
 type stravaActivity struct {
-	ID                 int64   `json:"id"`
-	StartDateLocal     string  `json:"start_date_local"` // "2026-04-30T07:30:00Z"
-	Type               string  `json:"type"`             // Run, Ride, Swim, ...
-	MovingTime         int     `json:"moving_time"`      // seconds
-	ElapsedTime        int     `json:"elapsed_time"`
-	Distance           float64 `json:"distance"`         // meters
-	AverageHeartrate   float64 `json:"average_heartrate"`
-	MaxHeartrate       float64 `json:"max_heartrate"`
-	Kilojoules         float64 `json:"kilojoules"`       // bikes only — ~kcal après /4.184
-	Calories           float64 `json:"calories"`         // present si Strava Premium
-	HasHeartrate       bool    `json:"has_heartrate"`
+	ID               int64   `json:"id"`
+	StartDateLocal   string  `json:"start_date_local"` // "2026-04-30T07:30:00Z"
+	Type             string  `json:"type"`             // Run, Ride, Swim, ...
+	MovingTime       int     `json:"moving_time"`      // seconds
+	ElapsedTime      int     `json:"elapsed_time"`
+	Distance         float64 `json:"distance"` // meters
+	AverageHeartrate float64 `json:"average_heartrate"`
+	MaxHeartrate     float64 `json:"max_heartrate"`
+	Kilojoules       float64 `json:"kilojoules"` // bikes only — ~kcal après /4.184
+	Calories         float64 `json:"calories"`   // present si Strava Premium
+	HasHeartrate     bool    `json:"has_heartrate"`
 }
 
 // stravaIngestActivity fetch une activité par ID, la convertit en
@@ -733,9 +747,13 @@ func stravaActivityToPhysio(a *stravaActivity) PhysioEntry {
 	if a.HasHeartrate && a.AverageHeartrate > 0 {
 		e.AvgHR = a.AverageHeartrate
 	}
-	// Calories prioritaires (Strava Premium les donne directement) ;
-	// sinon kJ * 0.239 ≈ kcal pour les rides ; sinon estimation grossière
-	// duration*HR à partir de moving_time.
+	// Énergie : Calories prioritaires (Strava Premium les donne directement) ;
+	// sinon kJ × 0.239 ≈ kcal (rides avec capteur de puissance). Audit F4 :
+	// il n'y a PAS d'estimation de secours duration×HR — une activité sans
+	// calories ni kJ (ex. un footing sans capteur, hors Premium) ressort donc
+	// avec ActiveEnergy = 0 et ne contribue qu'au AvgHR. C'est volontaire :
+	// une estimation duration×HR serait trop grossière pour alimenter la
+	// charge. À implémenter proprement si on veut couvrir ce cas plus tard.
 	switch {
 	case a.Calories > 0:
 		e.ActiveEnergy = a.Calories
@@ -765,8 +783,11 @@ func stravaStatusForUser(u *User) map[string]any {
 	return out
 }
 
-func handleStravaDisconnect(w http.ResponseWriter, r *http.Request) {
-	uid := currentUser(r)
+// stravaPurgeUser retire les credentials Strava d'un user, son lastSync, et
+// le sort de l'index athleteID→uid, puis persiste. Utilisé à la fois par la
+// déconnexion manuelle (handleStravaDisconnect) et par la désautorisation
+// poussée via webhook (stravaWebhookEvent).
+func stravaPurgeUser(uid string) {
 	physioMu.Lock()
 	usersMu.Lock()
 	if u := usersByID[uid]; u != nil && u.PhysioTokens != nil {
@@ -779,6 +800,11 @@ func handleStravaDisconnect(w http.ResponseWriter, r *http.Request) {
 	physioMu.Unlock()
 	stravaClearAthleteForUser(uid)
 	saveUsers()
+}
+
+func handleStravaDisconnect(w http.ResponseWriter, r *http.Request) {
+	uid := currentUser(r)
+	stravaPurgeUser(uid)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

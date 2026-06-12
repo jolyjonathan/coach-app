@@ -1,0 +1,171 @@
+package main
+
+/*
+recovery.go — Codes de récupération 2FA (backup codes).
+
+Problème résolu : avec la 2FA TOTP obligatoire, perdre son téléphone =
+perdre l'accès à ses données de santé. Le seul recours était un reset admin
+(impossible pour une instance mono-utilisateur). Les codes de récupération
+sont le filet de sécurité standard (GitHub, Google… font pareil).
+
+Cycle de vie :
+  1. Générés automatiquement à l'enrôlement TOTP réussi (handle2FAVerify).
+  2. Le CLAIR n'est renvoyé qu'UNE fois (la réponse du verify) — l'utilisateur
+     doit les noter. Ensuite, seuls les hash bcrypt sont stockés.
+  3. Au login, si le code TOTP échoue, on tente le code comme recovery code.
+     Un code valide consomme (retire) l'entrée — usage unique.
+  4. Régénération via POST /api/2fa/recovery (exige le mot de passe) :
+     invalide tous les anciens, en génère 10 nouveaux.
+  5. Désactiver la 2FA efface les codes.
+
+Format présenté à l'utilisateur : "abcd-efgh" (8 chars base32-lower + tiret
+pour la lisibilité). Entropie : 8 chars sur un alphabet de 32 = 40 bits par
+code — largement suffisant vu le rate-limit login et l'usage unique.
+*/
+
+import (
+	"crypto/rand"
+	"encoding/json"
+	"net/http"
+	"strings"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+const (
+	recoveryCodeCount  = 10
+	recoveryAlphabet   = "abcdefghijklmnopqrstuvwxyz234567" // base32 lower, sans 0/1/o/l ambigus exclus via 2-7
+	recoveryCodeRawLen = 8                                  // chars hors tiret
+	recoveryBcryptCost = 10                                 // un cran sous le mdp (12) : ces codes sont déjà à haute entropie
+)
+
+// genRecoveryPlainCode renvoie un code lisible "abcd-efgh".
+func genRecoveryPlainCode() string {
+	b := make([]byte, recoveryCodeRawLen)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
+	out := make([]byte, recoveryCodeRawLen)
+	for i, x := range b {
+		out[i] = recoveryAlphabet[int(x)%len(recoveryAlphabet)]
+	}
+	return string(out[:4]) + "-" + string(out[4:])
+}
+
+// generateRecoveryCodes renvoie (codesClairs, hashs). Les clairs ne sont
+// montrés qu'une fois ; seuls les hashs sont persistés.
+func generateRecoveryCodes() (plain []string, hashed []string) {
+	plain = make([]string, 0, recoveryCodeCount)
+	hashed = make([]string, 0, recoveryCodeCount)
+	for i := 0; i < recoveryCodeCount; i++ {
+		p := genRecoveryPlainCode()
+		h, err := bcrypt.GenerateFromPassword([]byte(normalizeRecoveryCode(p)), recoveryBcryptCost)
+		if err != nil {
+			continue // best-effort : un code en moins n'est pas bloquant
+		}
+		plain = append(plain, p)
+		hashed = append(hashed, string(h))
+	}
+	return plain, hashed
+}
+
+// normalizeRecoveryCode rend la comparaison tolérante : on ignore les tirets,
+// les espaces et la casse (l'utilisateur peut taper "ABCD EFGH" ou "abcdefgh").
+func normalizeRecoveryCode(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "-", "")
+	s = strings.ReplaceAll(s, " ", "")
+	return s
+}
+
+// consumeRecoveryCode vérifie `code` contre les hashs stockés de l'utilisateur.
+// Si un hash matche, il est RETIRÉ (usage unique) et la fonction renvoie true.
+// Doit être appelée sous usersMu.Lock() — elle mute u.RecoveryCodes.
+func consumeRecoveryCode(u *User, code string) bool {
+	if u == nil || len(u.RecoveryCodes) == 0 {
+		return false
+	}
+	norm := normalizeRecoveryCode(code)
+	if len(norm) != recoveryCodeRawLen {
+		return false
+	}
+	for i, h := range u.RecoveryCodes {
+		if bcrypt.CompareHashAndPassword([]byte(h), []byte(norm)) == nil {
+			// Retire l'entrée consommée (usage unique).
+			u.RecoveryCodes = append(u.RecoveryCodes[:i], u.RecoveryCodes[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// handle2FARecovery (POST /api/2fa/recovery) régénère les codes de secours.
+// Exige le mot de passe courant — défense contre un vol de session qui
+// régénérerait les codes pour exfiltrer une porte d'entrée. Renvoie les
+// nouveaux codes EN CLAIR (seule et unique fois).
+func handle2FARecovery(w http.ResponseWriter, r *http.Request) {
+	uid := currentUser(r)
+	var req struct {
+		Password string `json:"password"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON invalide")
+		return
+	}
+	usersMu.RLock()
+	u := usersByID[uid]
+	var hash []byte
+	var has2FA bool
+	if u != nil {
+		hash = []byte(u.PasswordHash)
+		has2FA = u.TOTPSecret != ""
+	}
+	usersMu.RUnlock()
+	if u == nil {
+		writeErr(w, http.StatusUnauthorized, "non connecté")
+		return
+	}
+	if !has2FA {
+		writeErr(w, http.StatusConflict, "active d'abord la 2FA")
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword(hash, []byte(req.Password)); err != nil {
+		logAuthEvent("2fa_recovery_regen", hashEmailForLog(u.EmailLower), clientIP(r), false, "bad_password")
+		writeErr(w, http.StatusUnauthorized, "mot de passe incorrect")
+		return
+	}
+	plain, hashed := generateRecoveryCodes()
+	usersMu.Lock()
+	if u2 := usersByID[uid]; u2 != nil {
+		u2.RecoveryCodes = hashed
+	}
+	usersMu.Unlock()
+	saveUsers() // synchrone : on doit garantir que les codes affichés sont persistés
+	logAuthEvent("2fa_recovery_regen", hashEmailForLog(u.EmailLower), clientIP(r), true, "")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":    true,
+		"codes": plain,
+		"count": len(plain),
+	})
+}
+
+// handle2FARecoveryStatus (GET /api/2fa/recovery) renvoie combien de codes
+// restent — pas les codes eux-mêmes (ils ne sont jamais re-montrés).
+func handle2FARecoveryStatus(w http.ResponseWriter, r *http.Request) {
+	uid := currentUser(r)
+	usersMu.RLock()
+	u := usersByID[uid]
+	remaining := 0
+	has2FA := false
+	if u != nil {
+		remaining = len(u.RecoveryCodes)
+		has2FA = u.TOTPSecret != ""
+	}
+	usersMu.RUnlock()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"twofaEnabled": has2FA,
+		"remaining":    remaining,
+	})
+}

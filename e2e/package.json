@@ -1,0 +1,11 @@
+{
+  "name": "coach-e2e",
+  "private": true,
+  "description": "Tests end-to-end Playwright pour Coach Adaptatif",
+  "scripts": {
+    "test": "playwright test --config playwright.config.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.45.0"
+  }
+}

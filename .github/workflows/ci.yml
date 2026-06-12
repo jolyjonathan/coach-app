@@ -69,13 +69,84 @@ jobs:
           retention-days: 7
 
   # -----------------------------------------------------------
+  # Tests JS des modèles scientifiques (banister, bayesian, science,
+  # programming, rehab, snacks). 83 assertions, zéro dépendance npm —
+  # juste node. Sans ce job, une régression dans les modèles passait
+  # la CI sans être vue (les tests Go ne couvrent que le backend).
+  # -----------------------------------------------------------
+  js:
+    name: JS model tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run model tests
+        working-directory: public
+        run: node tests/run-tests.js
+
+      - name: Syntax-check tous les JS servis
+        working-directory: public
+        run: |
+          for f in *.js; do
+            node --check "$f"
+          done
+
+  # -----------------------------------------------------------
+  # Tests end-to-end Playwright — parcours navigateur réel (login,
+  # consentement, onboarding, nav, chargement des assets). Build le
+  # binaire Go et le lance via le webServer Playwright.
+  # -----------------------------------------------------------
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    needs: [go, js]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright + browser
+        working-directory: e2e
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Run e2e
+        working-directory: e2e
+        run: npx playwright test --config playwright.config.js
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          retention-days: 7
+
+  # -----------------------------------------------------------
   # Build de l'image Docker (sans push) — vérifie que le Dockerfile
   # reste fonctionnel à chaque PR.
   # -----------------------------------------------------------
   docker:
     name: Docker build
     runs-on: ubuntu-latest
-    needs: go
+    needs: [go, js]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -95,8 +166,42 @@ jobs:
 
       - name: Smoke test image
         run: |
-          # Le binaire répond à --healthcheck quand un serveur tourne.
-          # Pour le CI, on vérifie juste que l'image est bien formée et
-          # que l'entrypoint est exécutable.
-          docker run --rm --entrypoint /app/coach-app coach-app:ci --help 2>&1 | head -20 || true
-          docker image inspect coach-app:ci > /dev/null
+          # VRAI smoke test : on démarre le conteneur comme en production
+          # (clé de chiffrement valide requise depuis le fail-fast au boot),
+          # on attend que /healthz réponde 200 depuis le host, puis on
+          # vérifie aussi le sub-mode --healthcheck (celui que Docker
+          # HEALTHCHECK utilise). Aucun `|| true` : tout échec est bloquant.
+          set -euo pipefail
+          docker run -d --name coach-smoke \
+            -e COACH_TOKEN_KEY="$(openssl rand -hex 32)" \
+            -e COACH_LISTEN=0.0.0.0:8080 \
+            -p 18080:8080 \
+            coach-app:ci
+
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1; then
+              ok=1; break
+            fi
+            sleep 1
+          done
+
+          echo "--- logs conteneur ---"
+          docker logs coach-smoke
+
+          if [ "$ok" != "1" ]; then
+            echo "::error::/healthz n'a jamais répondu 200 en 30s"
+            docker rm -f coach-smoke
+            exit 1
+          fi
+
+          # Le sub-mode --healthcheck (utilisé par HEALTHCHECK du Dockerfile)
+          # doit sortir en 0 quand le serveur tourne.
+          docker exec coach-smoke /app/coach-app --healthcheck
+
+          # La page d'accueil et la policy doivent répondre aussi.
+          curl -fsS http://127.0.0.1:18080/ >/dev/null
+          curl -fsS http://127.0.0.1:18080/privacy >/dev/null
+
+          docker rm -f coach-smoke
+          echo "Smoke test OK"

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -40,13 +41,35 @@ func newTestServer(t *testing.T) (*http.ServeMux, func()) {
 	usersByEm = map[string]*User{}
 	usersMu.Unlock()
 
-	sessionsMu.Lock()
-	sessions = map[string]Session{}
-	sessionsMu.Unlock()
+	sessionStore.Reset()
 
 	rlMu.Lock()
 	rlMap = map[rlKey]*rlRec{}
 	rlMu.Unlock()
+
+	// B3 : les autres maps globales doivent AUSSI être remises à zéro, sinon
+	// l'état d'un test fuit dans le suivant et la suite devient flaky / ordre-
+	// dépendante (ex. un counter TOTP consommé, un state OAuth en attente, ou
+	// un athleteID Strava résolu vers un uid désormais inexistant).
+	totpLastUsedMu.Lock()
+	totpLastUsed = map[string]int64{}
+	totpLastUsedMu.Unlock()
+
+	pending2FAMu.Lock()
+	pending2FA = map[string]pending2FAEntry{}
+	pending2FAMu.Unlock()
+
+	stravaStatesMu.Lock()
+	stravaPendingStates = map[string]stravaPendingState{}
+	stravaStatesMu.Unlock()
+
+	stravaAthleteMu.Lock()
+	stravaAthleteIndex = map[int64]string{}
+	stravaAthleteMu.Unlock()
+
+	// userFileLocks est un sync.Map de mutex par-uid ; on le réinitialise pour
+	// ne pas conserver des locks pointant vers des fichiers de tmp dirs détruits.
+	userFileLocks = sync.Map{}
 
 	// loadUsers also seeds dummyHash, which we need for login timing-safety.
 	loadUsers()
@@ -79,7 +102,13 @@ func newTestServer(t *testing.T) (*http.ServeMux, func()) {
 	mux.HandleFunc("DELETE /api/admin/users/{id}", requireAdmin(require2FA(handleAdminDeleteUser)))
 	mux.HandleFunc("GET /api/admin/users/{id}/data", requireAdmin(require2FA(handleAdminGetUserData)))
 
-	cleanup := func() { /* t.TempDir auto-removes */ }
+	// Plusieurs handlers lancent les écritures disque en goroutine
+	// (`go saveUsers()`, `go saveSessions()`). Si l'une d'elles s'exécute
+	// pendant que t.TempDir() fait son RemoveAll de fin de test, le nettoyage
+	// échoue avec « directory not empty ». On laisse une petite fenêtre aux
+	// goroutines pour se vider AVANT le retour du test (donc avant le cleanup
+	// TempDir, qui tourne en t.Cleanup après le corps du test).
+	cleanup := func() { time.Sleep(100 * time.Millisecond) }
 	return mux, cleanup
 }
 

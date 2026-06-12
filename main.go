@@ -62,6 +62,17 @@ func main() {
 	// Best-effort tighten perms on data dir (and its parent if newly created).
 	_ = os.Chmod(dataDir, 0o700)
 
+	// Fail-fast au boot plutôt que découverte tardive en production :
+	//   1. La clé de chiffrement doit être valide AVANT d'accepter du trafic —
+	//      sinon le premier setup 2FA / token Oura partirait en cleartext
+	//      silencieux (mode dégradé d'encryptToken).
+	//   2. Le data dir doit être réellement INSCRIPTIBLE — MkdirAll réussit
+	//      sur un volume read-only si le répertoire existe déjà ; on probe
+	//      avec une vraie écriture pour attraper le volume mal monté dès le
+	//      démarrage au lieu du premier save utilisateur.
+	validateTokenKeyAtBoot()
+	probeDataDirWritable()
+
 	loadUsers()
 	ensureBootstrapAdmin()
 	loadSessions()
@@ -70,7 +81,8 @@ func main() {
 	go sessionJanitor()
 	go rateLimitJanitor()
 	go rateLimitSnapshotter()
-	startAuditJanitor() // rotation du journal d'audit à 12 mois (RGPD)
+	go storeFlusher()           // Audit modularité action 1 : coalescing des writes users/sessions
+	startAuditJanitor()         // rotation du journal d'audit à 12 mois (RGPD)
 	rebuildStravaAthleteIndex() // map athleteID → uid pour le webhook
 	go stravaJanitor()          // purge des states OAuth pending expirés
 
@@ -150,6 +162,9 @@ func main() {
 	mux.HandleFunc("POST /api/2fa/setup", rateLimit("2fa_setup", 5, 15*time.Minute, requireAuth(handle2FASetup)))
 	mux.HandleFunc("POST /api/2fa/verify", rateLimit("2fa_verify", 10, 15*time.Minute, requireAuth(handle2FAVerify)))
 	mux.HandleFunc("POST /api/2fa/disable", rateLimit("2fa_disable", 5, 15*time.Minute, requireAuth(handle2FADisable)))
+	// Codes de récupération 2FA : statut (combien restent) + régénération.
+	mux.HandleFunc("GET /api/2fa/recovery", requireAuth(handle2FARecoveryStatus))
+	mux.HandleFunc("POST /api/2fa/recovery", rateLimit("2fa_recovery", 5, 15*time.Minute, requireAuth(handle2FARecovery)))
 
 	// --- Admin API (requires authenticated admin + CSRF on writes) ---
 	// Admin routes also go behind require2FA — admin without 2FA is a fat
@@ -162,6 +177,8 @@ func main() {
 	mux.HandleFunc("POST /api/admin/users/{id}/revoke-sessions", rateLimit("admin_write", 30, 5*time.Minute, requireAdmin(require2FA(handleAdminRevokeSessions))))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", rateLimit("admin_write", 30, 5*time.Minute, requireAdmin(require2FA(handleAdminDeleteUser))))
 	mux.HandleFunc("GET /api/admin/users/{id}/data", requireAdmin(require2FA(handleAdminGetUserData)))
+	// Observabilité : métriques (Prometheus text ou JSON), admin-only.
+	mux.HandleFunc("GET /api/admin/metrics", requireAdmin(require2FA(handleAdminMetrics)))
 
 	// --- Static ---
 	staticFS := http.FileServer(http.Dir(publicDir))
@@ -184,6 +201,18 @@ func main() {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "text/plain")
+		// Healthcheck PROFOND optionnel (?deep=1) : vérifie que le data dir
+		// est réellement inscriptible ET que la clé de chiffrement déchiffre
+		// — pas seulement que le process répond. Le check Docker reste léger
+		// (sans ?deep) pour ne pas écrire sur disque toutes les 30s ; un
+		// monitoring externe peut taper /healthz?deep=1 plus rarement.
+		if r.URL.Query().Get("deep") == "1" {
+			if err := deepHealth(); err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte("unhealthy: " + err.Error() + "\n"))
+				return
+			}
+		}
 		_, _ = w.Write([]byte("ok\n"))
 	})
 
@@ -195,10 +224,10 @@ func main() {
 
 	// Middleware chain: outermost first.
 	handler := chain(mux,
-		recoverPanic,    // catch-all for panics, returns 500 without leaking stack
-		accessLog,       // access logging (sans body/cookies)
-		secureHeaders,   // CSP, HSTS, X-Frame-Options, etc.
-		maxBody(1<<20),  // hard cap: 1 MiB per request
+		recoverPanic,   // catch-all for panics, returns 500 without leaking stack
+		accessLog,      // access logging (sans body/cookies)
+		secureHeaders,  // CSP, HSTS, X-Frame-Options, etc.
+		maxBody(1<<20), // hard cap: 1 MiB per request
 	)
 
 	srv := &http.Server{
@@ -224,7 +253,8 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
-	saveSessions()
+	flushStores()   // Audit action 1 : flush final users/sessions dirty
+	saveSessions()  // ceinture-bretelles : l'état sessions est toujours écrit au shutdown
 	saveRateLimit() // Audit M-04 : flush final
 	log.Println("bye")
 }
@@ -234,6 +264,48 @@ func getenv(k, d string) string {
 		return v
 	}
 	return d
+}
+
+// validateTokenKeyAtBoot vérifie la clé de chiffrement at-rest AU DÉMARRAGE.
+//
+// Avant, initTokenAEAD était lazy (premier encrypt/decrypt) et une clé
+// absente/mal formée (hex invalide, ≠32 bytes) basculait silencieusement en
+// stockage CLEARTEXT des secrets TOTP et tokens API, avec un simple warning
+// au premier usage. Découvrir ça des semaines plus tard en lisant users.json
+// est inacceptable pour un déploiement sérieux.
+//
+// Nouveau contrat :
+//   - Clé valide                  → boot normal.
+//   - Clé absente/invalide        → log.Fatalf (le service refuse de démarrer).
+//   - COACH_ALLOW_CLEARTEXT=1     → opt-out explicite pour l'usage perso sans
+//     clé (lab mono-utilisateur, données non sensibles) : on boot quand même,
+//     avec un warning impossible à rater. Le mode dégradé d'encryptToken
+//     reste alors le comportement assumé, plus un accident.
+func validateTokenKeyAtBoot() {
+	err := initTokenAEAD()
+	if err == nil {
+		return
+	}
+	if getenv("COACH_ALLOW_CLEARTEXT", "") == "1" {
+		log.Printf("WARNING: chiffrement at-rest DÉSACTIVÉ (%v) — COACH_ALLOW_CLEARTEXT=1. "+
+			"Les secrets TOTP et tokens API seront stockés EN CLAIR dans users.json.", err)
+		return
+	}
+	log.Fatalf("COACH_TOKEN_KEY invalide ou absente : %v\n"+
+		"  → génère une clé :  openssl rand -hex 32\n"+
+		"  → ou pour un usage perso sans chiffrement, set COACH_ALLOW_CLEARTEXT=1 (déconseillé)", err)
+}
+
+// probeDataDirWritable écrit (puis supprime) un fichier témoin dans dataDir.
+// MkdirAll ne suffit pas : sur un volume monté read-only où le répertoire
+// existe déjà, MkdirAll réussit et l'app boote — puis chaque save échoue en
+// silence relatif (logs). On préfère refuser de démarrer.
+func probeDataDirWritable() {
+	probe := filepath.Join(dataDir, ".write-probe")
+	if err := os.WriteFile(probe, []byte("ok"), 0o600); err != nil {
+		log.Fatalf("data dir non inscriptible (%s) : %v — volume read-only ou permissions incorrectes ?", dataDir, err)
+	}
+	_ = os.Remove(probe)
 }
 
 func serveIndex(w http.ResponseWriter, r *http.Request) {
@@ -318,6 +390,14 @@ func randHex(n int) string {
 // clientIP returns the best-effort client IP, honoring X-Forwarded-For ONLY if we
 // explicitly trust the proxy (COACH_TRUST_PROXY=1). Without that, any client could
 // spoof their IP and bypass rate limiting.
+//
+// Audit S4 — IMPORTANT : on prend le PREMIER élément de X-Forwarded-For. C'est
+// correct UNIQUEMENT si le reverse proxy de confiance RÉÉCRIT l'en-tête (comme
+// Caddy : il met l'IP réelle du client en tête). Si jamais on place devant un
+// proxy qui se contente d'AJOUTER (append) à un XFF entrant, le premier élément
+// redevient contrôlable par le client → spoof d'IP et bypass du rate limit.
+// Donc : n'active COACH_TRUST_PROXY=1 QUE derrière un proxy qui réécrit XFF, et
+// assure-toi que ce proxy n'est pas joignable en direct depuis Internet.
 func clientIP(r *http.Request) string {
 	if trustProxy {
 		if x := r.Header.Get("X-Forwarded-For"); x != "" {

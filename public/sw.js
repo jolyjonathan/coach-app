@@ -29,7 +29,10 @@
 // Bump à v4 : ajout de /static/app.css extrait de index.html (audit M-02).
 // L'ancienne cache v3 servait l'index.html qui contenait le CSS inline →
 // l'écraser pour que tout le monde récupère le nouveau bundle HTML+CSS séparé.
-const SHELL_VERSION = 'coach-shell-v5';
+// Bump à v7 : découpage modularité (core.js, exercises-data.js,
+// gamification.js extraits d'app.js ; qrcode.js désormais chargé à la
+// demande mais conservé dans le shell pour l'enrôlement 2FA hors-ligne).
+const SHELL_VERSION = 'coach-shell-v7';
 const DATA_VERSION  = 'coach-data-v1';
 
 // Tous les JS et CSS chargés par index.html doivent être ici, sinon offline
@@ -38,7 +41,13 @@ const DATA_VERSION  = 'coach-data-v1';
 const SHELL_ASSETS = [
   '/',
   '/static/app.css',
+  '/static/i18n.js',
+  '/static/core.js',
+  '/static/exercises-data.js',
+  '/static/gamification.js',
   '/static/app.js',
+  // qrcode.js n'est plus chargé au boot (lazy via ensureQRCodeLib) mais
+  // reste précaché pour que l'enrôlement 2FA fonctionne hors-ligne.
   '/static/qrcode.js',
   '/static/rehab.js',
   '/static/snacks.js',
@@ -46,6 +55,7 @@ const SHELL_ASSETS = [
   '/static/bayesian.js',
   '/static/banister.js',
   '/static/science.js',
+  '/static/cycle.js',
   '/manifest.json',
   '/icon.svg',
 ];

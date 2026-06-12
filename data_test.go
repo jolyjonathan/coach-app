@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -123,8 +124,8 @@ func TestDataUnknownFieldsRejected(t *testing.T) {
 	cookies, csrf := registerAndLogin(t, mux, "alice@example.com", "Correct-horse-9")
 
 	res := doJSON(t, mux, http.MethodPut, "/api/data", map[string]any{
-		"data":    map[string]any{"profile": "x"},
-		"extra":   "should-reject",
+		"data":  map[string]any{"profile": "x"},
+		"extra": "should-reject",
 	}, cookies, csrf)
 	if res.status != http.StatusBadRequest {
 		t.Errorf("unknown envelope field: status=%d want 400", res.status)
@@ -166,5 +167,51 @@ func TestDataPathValidation(t *testing.T) {
 	// 16 hex + ".json" = 21 chars.
 	if good[len(good)-21:] != "a1b2c3d4e5f60718.json" {
 		t.Errorf("dataPath valid id: got %q", good)
+	}
+}
+
+// TestDataETag — audit modularité action 8 : GET /api/data émet un ETag
+// fort ; If-None-Match identique → 304 sans corps ; une écriture change
+// l'ETag.
+func TestDataETag(t *testing.T) {
+	mux, cleanup := newTestServer(t)
+	defer cleanup()
+	cookies, csrf := registerAndLogin(t, mux, "etag@example.com", "Correct-horse-9")
+
+	save := doJSON(t, mux, http.MethodPut, "/api/data", map[string]any{
+		"data": map[string]any{"profile": map[string]any{"goal": "muscle"}},
+	}, cookies, csrf)
+	if save.status != http.StatusOK {
+		t.Fatalf("save: status=%d", save.status)
+	}
+
+	r1 := doJSON(t, mux, http.MethodGet, "/api/data", nil, cookies, "")
+	etag := r1.headers.Get("ETag")
+	if etag == "" {
+		t.Fatal("GET /api/data: ETag manquant")
+	}
+
+	// Re-GET avec If-None-Match → 304.
+	req := httptest.NewRequest(http.MethodGet, "/api/data", nil)
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	req.Header.Set("If-None-Match", etag)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotModified {
+		t.Errorf("If-None-Match identique: status=%d want 304", rec.Code)
+	}
+
+	// Une écriture doit changer l'ETag.
+	save2 := doJSON(t, mux, http.MethodPut, "/api/data", map[string]any{
+		"data": map[string]any{"profile": map[string]any{"goal": "force"}},
+	}, cookies, csrf)
+	if save2.status != http.StatusOK {
+		t.Fatalf("save2: status=%d", save2.status)
+	}
+	r2 := doJSON(t, mux, http.MethodGet, "/api/data", nil, cookies, "")
+	if r2.headers.Get("ETag") == etag {
+		t.Errorf("ETag inchangé après écriture — il doit refléter le contenu")
 	}
 }

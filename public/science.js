@@ -356,7 +356,14 @@
    *   56-84j → 22 → 30%
    *   >84j  → plateau à ~30-35% (au-delà, retour quasi débutant)
    * ============================================================ */
-  function detrainingProjection(daysOff) {
+  // Amélioration #4 : courbe modulée par le profil (Mujika & Padilla 2000,
+  // Detraining I & II). Les athlètes entraînés (≥2 ans de bagage ou CTL
+  // élevé) retiennent mieux leurs adaptations ; les novices (<6 mois) les
+  // perdent plus vite car moins consolidées. opts est optionnel — sans
+  // opts, comportement historique inchangé.
+  //   opts.trainingAgeWeeks : ancienneté d'entraînement en semaines
+  //   opts.ctl              : CTL courant (Banister.computeAll().ctl)
+  function detrainingProjection(daysOff, opts) {
     if (daysOff == null || daysOff < 7) return null;
     let lossPct;
     if (daysOff < 14)      lossPct = (daysOff - 7) / 7 * 5;
@@ -364,7 +371,19 @@
     else if (daysOff < 56) lossPct = 12 + (daysOff - 28) / 28 * 10;
     else if (daysOff < 84) lossPct = 22 + (daysOff - 56) / 28 * 8;
     else                   lossPct = Math.min(35, 30 + (daysOff - 84) / 28 * 5);
-    lossPct = Math.round(lossPct);
+    let profile = 'standard';
+    if (opts) {
+      const age = +opts.trainingAgeWeeks;
+      const ctl = +opts.ctl;
+      if ((isFinite(age) && age >= 104) || (isFinite(ctl) && ctl >= 60)) {
+        lossPct *= 0.8;  // entraîné : meilleure rétention
+        profile = 'trained';
+      } else if (isFinite(age) && age > 0 && age < 26) {
+        lossPct *= 1.15; // novice : adaptations moins consolidées
+        profile = 'novice';
+      }
+    }
+    lossPct = Math.min(40, Math.round(lossPct));
     let severity = 'mild';
     if (daysOff >= 56) severity = 'significant';
     else if (daysOff >= 21) severity = 'moderate';
@@ -373,9 +392,205 @@
       retentionPct: 100 - lossPct,
       lossPct,
       severity,
+      profile,
       // Recommandation de reprise : déloader à -lossPct du dernier 1RM,
       // remontée progressive sur 2-3 semaines.
       suggestedLoadReductionPct: Math.min(30, lossPct + 3),
+    };
+  }
+
+  /* ============================================================
+   * Amélioration #8 — deloadAdvisor : verdict deload fusionné.
+   * ============================================================
+   * Trois familles de signaux d'alerte vivaient séparément :
+   *   - Bayesian.detectDrift  (pente 1RM négative — filtre de Kalman)
+   *   - Banister TSB          (surcharge / fatigue — Banister 1975)
+   *   - Hooper                (fatigue subjective — Hooper 1995)
+   * plus les nouveaux : monotonie/strain (Foster 1998) et ACWR (Gabbett
+   * 2016). L'utilisateur ne devrait pas avoir à recouper 5 écrans : on
+   * fusionne en UN verdict, avec le pourquoi sourcé de chaque signal.
+   *
+   * Entrée : signaux DÉJÀ calculés par l'appelant (module pur, pas de
+   * dépendance circulaire) :
+   *   {
+   *     tsbLevel,        // Banister.recommendation(tsb).level
+   *     drifts,          // [{name, severity}] — exos en dérive Kalman
+   *     hooperLevel,     // hooperReadiness().level ('low'|'medium'|'high')
+   *     monotonyLevel,   // Banister.monotony().level
+   *     acwrZone,        // Banister.acwr().zone
+   *   }
+   * Tous optionnels — un signal absent ne vote pas.
+   *
+   * Score pondéré : drift fort 2 / léger 1 ; TSB overload 2 / fatigued 1 ;
+   * Hooper low 1 ; monotonie high 1 ; ACWR danger 1.
+   *   ≥ 3 → 'recommended', 2 → 'consider', sinon 'none'.
+   * ============================================================ */
+  function deloadAdvisor(signals) {
+    signals = signals || {};
+    let score = 0;
+    const reasons = [];
+
+    const drifts = Array.isArray(signals.drifts) ? signals.drifts : [];
+    if (drifts.length > 0) {
+      const strong = drifts.some(d => d && d.severity === 'strong');
+      score += strong ? 2 : 1;
+      const names = drifts.map(d => (d && d.name) || '?').slice(0, 3).join(', ');
+      reasons.push({
+        source: 'Filtre de Kalman (pente 1RM)',
+        detail: 'Régression ' + (strong ? 'marquée' : 'légère') + ' sur : ' + names + '.',
+        weight: strong ? 2 : 1,
+      });
+    }
+    if (signals.tsbLevel === 'overload') {
+      score += 2;
+      reasons.push({
+        source: 'Banister 1975 (TSB)',
+        detail: 'TSB en zone de surcharge — la fatigue accumulée dépasse nettement le fitness.',
+        weight: 2,
+      });
+    } else if (signals.tsbLevel === 'fatigued') {
+      score += 1;
+      reasons.push({
+        source: 'Banister 1975 (TSB)',
+        detail: 'TSB négatif marqué — charge accumulée importante.',
+        weight: 1,
+      });
+    }
+    if (signals.hooperLevel === 'low') {
+      score += 1;
+      reasons.push({
+        source: 'Hooper 1995 (indice subjectif)',
+        detail: 'Sommeil / fatigue / courbatures / stress dégradés au questionnaire.',
+        weight: 1,
+      });
+    }
+    if (signals.monotonyLevel === 'high') {
+      score += 1;
+      reasons.push({
+        source: 'Foster 1998 (monotonie)',
+        detail: 'Charge trop uniforme jour après jour — facteur de risque indépendant du volume.',
+        weight: 1,
+      });
+    }
+    if (signals.acwrZone === 'danger') {
+      score += 1;
+      reasons.push({
+        source: 'Gabbett 2016 (ACWR)',
+        detail: 'Pic de charge aiguë >1.5× ta moyenne chronique.',
+        weight: 1,
+      });
+    }
+    if (signals.autonomicLevel === 'alert') {
+      score += 2;
+      reasons.push({
+        source: 'Plews 2013 (marqueurs autonomes)',
+        detail: 'HRV, FC repos et respiration concordent vers une surcharge sympathique.',
+        weight: 2,
+      });
+    } else if (signals.autonomicLevel === 'watch') {
+      score += 1;
+      reasons.push({
+        source: 'Plews 2013 (marqueurs autonomes)',
+        detail: 'Deux marqueurs autonomes dérivent dans le mauvais sens.',
+        weight: 1,
+      });
+    }
+
+    let level = 'none';
+    if (score >= 3) level = 'recommended';
+    else if (score === 2) level = 'consider';
+    return {
+      score,
+      level,
+      recommend: level === 'recommended',
+      reasons,
+      advice: level === 'recommended'
+        ? 'Plusieurs modèles indépendants convergent : une semaine de deload (volume -40 à -50%, intensité conservée) est le choix rationnel.'
+        : level === 'consider'
+          ? 'Deux signaux d\'alerte — pas encore une urgence, mais planifie un deload dans la semaine qui vient si ça persiste.'
+          : 'Pas de convergence de signaux — continue le bloc en cours.',
+    };
+  }
+
+  /* ============================================================
+   * Détecteur d'overreaching autonome (audit produit).
+   * ============================================================
+   * Exploite des champs physio déjà collectés mais jamais consommés par
+   * les modèles : la FRÉQUENCE CARDIAQUE AU REPOS (RHR) et la FRÉQUENCE
+   * RESPIRATOIRE nocturne, croisées avec le HRV.
+   *
+   * Signature physiologique de la surcharge sympathique (Plews 2013,
+   * Bellenger 2016) : sur ~7 jours vs baseline ~28 jours,
+   *   - HRV qui BAISSE (z < 0),
+   *   - RHR qui MONTE (z > 0),
+   *   - fréquence respiratoire qui MONTE (z > 0).
+   * Les trois ensemble précèdent la chute de performance — bien avant que
+   * le 1RM ne décroche. Deux signaux concordants = avertissement, trois =
+   * alerte.
+   *
+   * Renvoie { level: 'none'|'watch'|'alert', signals: [...], advice }.
+   * Pur, sans DOM. Réutilise hrvBaseline pour la cohérence des baselines.
+   * ============================================================ */
+  function autonomicOverreaching(physio, atTime) {
+    atTime = atTime || Date.now();
+    if (!Array.isArray(physio) || physio.length < 10) return { level: 'none', signals: [] };
+
+    const recentCut = atTime - 7 * 86400000;
+    const baseCut = atTime - 28 * 86400000;
+
+    // meanIn(field, from, to) — moyenne d'un champ sur une fenêtre.
+    function meanIn(field, from, to) {
+      let sum = 0, n = 0;
+      for (const p of physio) {
+        const t = Date.parse(p.date || '');
+        if (!isFinite(t) || t < from || t >= to) continue;
+        const v = +p[field];
+        if (isFinite(v) && v > 0) { sum += v; n++; }
+      }
+      return n > 0 ? { mean: sum / n, n } : null;
+    }
+    function sdIn(field, from, to, mean) {
+      let s = 0, n = 0;
+      for (const p of physio) {
+        const t = Date.parse(p.date || '');
+        if (!isFinite(t) || t < from || t >= to) continue;
+        const v = +p[field];
+        if (isFinite(v) && v > 0) { s += (v - mean) * (v - mean); n++; }
+      }
+      return n > 1 ? Math.sqrt(s / n) : 0;
+    }
+
+    const signals = [];
+    // direction : +1 = "mauvais si ça monte" (RHR, resp), -1 = "mauvais si ça baisse" (HRV).
+    const checks = [
+      { field: 'hrv', dir: -1, label: 'HRV en baisse' },
+      { field: 'rhr', dir: +1, label: 'FC repos en hausse' },
+      { field: 'respRate', dir: +1, label: 'FC respiratoire en hausse' },
+    ];
+    for (const c of checks) {
+      const base = meanIn(c.field, baseCut, recentCut);
+      const recent = meanIn(c.field, recentCut, atTime + 86400000);
+      if (!base || !recent || base.n < 5) continue;
+      const sd = sdIn(c.field, baseCut, recentCut, base.mean);
+      if (!(sd > 0)) continue;
+      const z = (recent.mean - base.mean) / sd;
+      // Mauvaise direction ET écart franc (≥ 0.75 σ) → signal.
+      if (c.dir * z >= 0.75) {
+        signals.push({ field: c.field, label: c.label, z: +z.toFixed(2) });
+      }
+    }
+
+    let level = 'none';
+    if (signals.length >= 3) level = 'alert';
+    else if (signals.length === 2) level = 'watch';
+    return {
+      level,
+      signals,
+      advice: level === 'alert'
+        ? 'Trois marqueurs autonomes concordent (HRV, FC repos, respiration) — signature de surcharge sympathique. Priorise sommeil et récupération avant de reprendre la charge ; un deload est probablement nécessaire.'
+        : level === 'watch'
+          ? 'Deux marqueurs autonomes dérivent dans le mauvais sens. Surveille de près sur 2-3 jours ; allège si ça persiste.'
+          : 'Marqueurs autonomes (HRV, FC repos, respiration) dans la norme.',
     };
   }
 
@@ -477,6 +692,10 @@
     asymmetryReport,
     // Désentraînement
     detrainingProjection, lastTrainingGapDays,
+    // Deload fusionné (multi-signaux sourcés)
+    deloadAdvisor,
+    // Overreaching autonome (RHR + HRV + respiration)
+    autonomicOverreaching,
     // Vie quotidienne
     neatTrend, caffeineSleepCorrelation,
   };

@@ -134,8 +134,9 @@
   /* Background avec un dégradé radial subtil — signature Atmos. La couleur
      d'arrière-plan reste --bg pour les screenshots et les PDF. */
   body{
-    min-height:100vh;
-    padding-bottom:96px;
+    min-height:100vh;       /* fallback navigateurs anciens */
+    min-height:100dvh;      /* dynamic viewport : stable quand la barre d'URL mobile se rétracte */
+    padding-bottom:calc(96px + env(safe-area-inset-bottom, 0px));
     background:var(--bg);
     background-image:
       radial-gradient(ellipse at 20% 0%, rgba(123,161,255,0.08), transparent 50%),
@@ -153,7 +154,14 @@
     backdrop-filter:blur(20px) saturate(180%);
     -webkit-backdrop-filter:blur(20px) saturate(180%);
     border-bottom:1px solid var(--line);padding:14px 20px;
-    display:flex;justify-content:space-between;align-items:center;gap:12px}
+    padding-top:max(14px, env(safe-area-inset-top, 0px));
+    display:flex;justify-content:space-between;align-items:center;gap:12px;
+    transition:padding 0.25s ease}
+  /* Header rétractable : posé par JS quand on scrolle vers le bas, retiré
+     en remontant. Récupère ~20px d'écran utile en lecture. */
+  header.hdr-compact{padding-top:max(6px, env(safe-area-inset-top, 0px));padding-bottom:6px}
+  header.hdr-compact .sub{display:none}
+  header.hdr-compact h1{font-size:14px}
   header .hdr-title{min-width:0;flex:1}
   header h1{margin:0;font-size:16px;font-weight:600;letter-spacing:-0.01em;color:var(--txt);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1540,6 +1548,82 @@
   .modal-card .modal-actions button { min-width: 92px; }
   .modal-card .field { margin-bottom: 10px; }
   .modal-card .err { color: var(--danger); font-size: 13px; min-height: 18px; font-weight: 600; margin: 4px 0 0; }
+
+  /* ====================================================================
+     REFONTE MOBILE — composants ajoutés (greeting, mini-ring readiness,
+     carte repliable, segmented control, ergonomie pouce).
+     ==================================================================== */
+
+  /* Cibles tactiles ≥ 48px sur la nav (WCAG 2.5.5 / Material). */
+  nav.bottom button[data-tab]{min-height:48px}
+
+  /* --- Greeting home : date + salut + mini-ring readiness à droite --- */
+  .greeting{display:flex;justify-content:space-between;align-items:center;
+    margin-bottom:14px;gap:12px}
+  .greeting .greet-date{color:var(--mut);font-size:12px;text-transform:capitalize}
+  .greeting .greet-name{color:var(--txt);font-size:19px;font-weight:700;letter-spacing:-0.01em}
+  /* Mini-anneau readiness : SVG 56px, tap → détail (ouvre la carte science). */
+  .ready-ring{position:relative;width:56px;height:56px;flex-shrink:0;cursor:pointer;
+    background:transparent;border:none;padding:0;border-radius:50%}
+  .ready-ring svg{display:block;transform:rotate(-90deg)}
+  .ready-ring .rr-track{stroke:var(--line);fill:none}
+  .ready-ring .rr-bar{fill:none;stroke-linecap:round;transition:stroke-dashoffset 0.6s ease}
+  .ready-ring .rr-center{position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;pointer-events:none}
+  .ready-ring .rr-val{color:var(--txt);font-size:15px;font-weight:700;line-height:1}
+  .ready-ring .rr-lbl{color:var(--mut);font-size:8px;text-transform:uppercase;letter-spacing:.5px}
+
+  /* --- Carte repliable (check-in, sections secondaires) --- */
+  .collapsible > .collapse-head{display:flex;align-items:center;justify-content:space-between;
+    gap:8px;width:100%;background:transparent;border:none;padding:0;cursor:pointer;
+    color:var(--txt);text-align:left;min-height:48px}
+  .collapsible > .collapse-head h2{margin:0}
+  .collapsible > .collapse-head .collapse-sub{color:var(--mut);font-size:11px;font-weight:500}
+  .collapsible > .collapse-head .collapse-chev{color:var(--mut);font-size:14px;
+    transition:transform 0.25s ease;flex-shrink:0}
+  .collapsible.open > .collapse-head .collapse-chev{transform:rotate(180deg)}
+  .collapsible > .collapse-body{display:none}
+  .collapsible.open > .collapse-body{display:block}
+
+  /* --- Segmented control (onglet Tendances : Charge / Force / Corps) --- */
+  .seg{display:flex;background:var(--bg2);border-radius:12px;padding:3px;margin:4px 0 14px}
+  .seg button{flex:1;background:transparent;color:var(--mut);font-size:13px;font-weight:600;
+    padding:11px 4px;border-radius:10px;border:none;min-height:44px;transition:background 0.15s ease,color 0.15s ease}
+  .seg button.on{background:var(--card);color:var(--txt);box-shadow:var(--shadow-sm)}
+  .seg-pane.hide{display:none}
+
+  /* --- Lien-carte (navigation secondaire : historique, guide...) --- */
+  .nav-card{display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+    background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:14px;color:var(--txt);font-size:14px;font-weight:600;min-height:52px;
+    margin-bottom:10px;cursor:pointer}
+  .nav-card:hover{border-color:var(--line-strong)}
+  .nav-card .nav-card-sub{display:block;color:var(--mut);font-size:11px;font-weight:500;margin-top:1px}
+  .nav-card .nav-card-arrow{margin-left:auto;color:var(--mut)}
+
+  /* --- Séance : bouton valider en zone pouce ---
+     Sticky au bas du viewport pendant le scroll de la focus-card, au-dessus
+     de la safe-area. Le gros bouton reste TOUJOURS accessible au pouce. */
+  #viewSession .focus-go{position:sticky;bottom:calc(12px + env(safe-area-inset-bottom, 0px));
+    z-index:3;min-height:54px;font-size:17px}
+  /* Progression compacte : bandeau horizontal scrollable au lieu d'une carte
+     verticale qui pousse le bouton hors écran. */
+  .prog-strip{display:flex;gap:8px;overflow-x:auto;padding:4px 2px 8px;
+    -webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .prog-strip::-webkit-scrollbar{display:none}
+  .prog-chip{flex-shrink:0;background:var(--card);border:1px solid var(--line);
+    border-radius:11px;padding:7px 11px;font-size:11px;color:var(--mut);
+    display:flex;align-items:center;gap:6px;min-height:40px}
+  .prog-chip.current{border-color:var(--accent);color:var(--txt)}
+  .prog-chip.done{border-color:var(--success);color:var(--success)}
+  .prog-chip b{font-size:12px}
+
+  /* --- Codes de récupération 2FA --- */
+  .recovery-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:4px 0 6px}
+  .recovery-code{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    font-size:15px;letter-spacing:1px;text-align:center;padding:9px 6px;
+    background:var(--bg2);border:1px solid var(--line);border-radius:8px;
+    color:var(--txt);user-select:all}
 
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {

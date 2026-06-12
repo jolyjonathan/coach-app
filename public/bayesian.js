@@ -192,6 +192,29 @@
         qScale = qScaleForResponder(r.type);
       }
     }
+    // Amélioration #3 : inflation du bruit d'observation selon la fatigue.
+    // Un set loggé un jour de TSB très négatif sous-estime le vrai 1RM
+    // (fatigue neuromusculaire) — c'est une observation BRUITÉE, pas une
+    // vraie régression. On gonfle R quand TSB < -15 au moment du set, ce
+    // qui dit au filtre « ne crois pas trop cette contre-performance ».
+    // Désactivable via opts.fatigueAdjust = false. Mémoïsé par jour (le
+    // TSB ne bouge pas dans la journée à notre granularité).
+    const fatigueAdjust = opts.fatigueAdjust !== false &&
+      typeof window !== 'undefined' && window.Banister &&
+      typeof window.Banister.computeAll === 'function';
+    const tsbByDay = {};
+    function fatigueFactor(t) {
+      if (!fatigueAdjust) return 1;
+      const day = Math.floor(t / 86400000);
+      if (tsbByDay[day] == null) {
+        tsbByDay[day] = window.Banister.computeAll(history, t).tsb;
+      }
+      const tsb = tsbByDay[day];
+      if (!(tsb < -15)) return 1;
+      // TSB -15 → ×1 ; -35 → ×2 ; cap ×2.5.
+      return 1 + Math.min(1.5, (-tsb - 15) / 20);
+    }
+
     const obs = [];
     for (const h of history) {
       if (h && (h.kind === 'snack' || h.kind === 'external')) continue;
@@ -203,7 +226,7 @@
         if (!s.weight || !s.reps) continue;
         const y = epleyAdjusted(s.weight, s.reps, rpe);
         if (y == null) continue;
-        const R = observationVariance(s.reps, rpe);
+        const R = observationVariance(s.reps, rpe) * fatigueFactor(t);
         obs.push({ t, y, R });
       }
     }
@@ -218,6 +241,7 @@
       state.lastT = obs[i].t;
     }
     state.n = obs.length;
+    state.firstT = obs[0].t; // pour detectPlateau (span observé)
     state.lastDate = new Date(state.lastT).toISOString().slice(0, 10);
     state.qScale = qScale;
     // Cap la pente à un range raisonnable pour les forecasts : ±0.5 kg/jour.
@@ -373,6 +397,41 @@
   }
 
   /* -----------------------------------------------------------
+   * Détection de plateau — pendant de detectDrift (#9).
+   *
+   * detectDrift attrape la RÉGRESSION (β significativement négatif).
+   * detectPlateau attrape la STAGNATION CONFIANTE : le filtre est sûr que
+   * la pente est ~nulle depuis assez longtemps. Critères :
+   *   - n ≥ 10 observations sur un span ≥ 28 jours ;
+   *   - |β| < 0.05 kg/jour (±0.35 kg/sem — en-dessous du plus petit
+   *     incrément de disque) ;
+   *   - σ_β faible (< 0.3 kg/sem) — le filtre est CONFIANT, ce n'est pas
+   *     juste un manque de données.
+   * Un vrai plateau de 4+ semaines appelle un changement de stimulus :
+   * variation d'exercice (même pattern), de tempo ou de range de reps —
+   * principe de variation (Israetel, Schoenfeld 2016 sur la variation).
+   * ----------------------------------------------------------- */
+  function detectPlateau(state) {
+    if (!state || state.n < 10 || !state.firstT) return { plateau: false };
+    const spanDays = (state.lastT - state.firstT) / 86400000;
+    if (spanDays < 28) return { plateau: false };
+    const betaPerDay = state.betaClipped != null ? state.betaClipped : state.beta;
+    const betaPerWeek = betaPerDay * 7;
+    if (Math.abs(betaPerWeek) >= 0.35) return { plateau: false };
+    const sigmaBetaPerWeek = Math.sqrt(Math.max(0, state.Pb)) * 7;
+    if (sigmaBetaPerWeek >= 0.3) return { plateau: false }; // pas assez sûr
+    const weeks = Math.round(spanDays / 7);
+    return {
+      plateau: true,
+      weeks,
+      betaPerWeek: +betaPerWeek.toFixed(2),
+      advice: 'Pente ~nulle depuis ' + weeks + ' semaines avec une incertitude faible — ' +
+        'c\'est un vrai plateau, pas du bruit. Change le stimulus : variante du même ' +
+        'pattern de mouvement, tempo, ou range de reps différent (principe de variation).',
+    };
+  }
+
+  /* -----------------------------------------------------------
    * EXPORT
    * ----------------------------------------------------------- */
   window.Bayesian = {
@@ -386,6 +445,7 @@
     forecast, forecastTrajectory,
     detectAnomaly,
     detectDrift,
+    detectPlateau,
     qScaleForResponder,
   };
 })();

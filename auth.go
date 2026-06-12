@@ -8,6 +8,7 @@ import (
 	"net/mail"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -66,6 +67,18 @@ type User struct {
 	// PhysioLastSync tracks last successful sync per integration. Surfaced
 	// to the client so the UI can show "synced X min ago".
 	PhysioLastSync map[string]time.Time `json:"physioLastSync,omitempty"`
+
+	// RecoveryCodes : codes de secours 2FA (à usage unique). Générés à
+	// l'enrôlement TOTP, ils permettent de se connecter si l'utilisateur
+	// perd son téléphone — sans eux, perdre l'authenticator = perdre l'accès
+	// à ses données de santé (le seul recours était un reset admin).
+	//
+	// Sécurité : on ne stocke JAMAIS les codes en clair. Chaque code est
+	// haché bcrypt (même standard que le mot de passe). Le clair n'est montré
+	// qu'UNE fois, au moment de la génération. La consommation d'un code le
+	// retire de la liste (usage unique). Régénération via /api/2fa/recovery
+	// (invalide tous les anciens). Voir recovery.go.
+	RecoveryCodes []string `json:"recoveryCodes,omitempty"`
 }
 
 // Consent is a dated record of explicit consent to a specific policy version.
@@ -130,7 +143,7 @@ func loadUsers() {
 		}
 	}
 	if migratedTok > 0 || migratedTotp > 0 {
-		go saveUsers() // flush sans bloquer le boot
+		markUsersDirty() // flush différé par le storeFlusher — ne bloque pas le boot
 		log.Printf("loaded %d users (migrated %d cleartext API tokens, %d cleartext TOTP secrets)",
 			len(list), migratedTok, migratedTotp)
 	} else {
@@ -139,14 +152,27 @@ func loadUsers() {
 }
 
 func saveUsers() {
-	usersMu.RLock()
-	list := make([]*User, 0, len(usersByID))
-	for _, u := range usersByID {
-		list = append(list, u)
-	}
-	usersMu.RUnlock()
-	if err := writeJSONAtomic(usersFile(), list, 0o600); err != nil {
+	if err := writeJSONAtomic(usersFile(), userStore.Snapshot(), 0o600); err != nil {
 		log.Printf("users save: %v", err)
+	}
+}
+
+// purgeUsersBackup réécrit users.json.bak avec l'état courant de users.json.
+// À appeler après une suppression de compte : sans ça, l'email et le hash du
+// compte supprimé survivent dans le backup quotidien jusqu'à sa prochaine
+// rotation (RGPD art. 17). Best-effort — ne touche à rien si aucun .bak
+// n'existe encore.
+func purgeUsersBackup() {
+	bak := usersFile() + ".bak"
+	if _, err := os.Stat(bak); err != nil {
+		return // pas de backup → rien à purger
+	}
+	b, err := os.ReadFile(usersFile())
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(bak, b, 0o600); err != nil {
+		log.Printf("users backup purge: %v", err)
 	}
 }
 
@@ -164,8 +190,14 @@ func validPassword(s string) error {
 	if len(s) < 10 {
 		return errors.New("mot de passe trop court (min 10 caractères)")
 	}
-	if len(s) > 128 {
-		return errors.New("mot de passe trop long (max 128)")
+	// Audit S2 : bcrypt ignore silencieusement tout au-delà de 72 OCTETS.
+	// Autoriser jusqu'à 128 caractères donnait une fausse impression de force
+	// (deux mots de passe partageant les 72 premiers octets étaient
+	// équivalents). On cape à 72 octets pour qu'aucune entropie saisie ne soit
+	// tronquée sans que l'utilisateur le sache. NB : on compte les OCTETS
+	// (len sur une string Go), pas les runes — c'est bien la limite de bcrypt.
+	if len(s) > 72 {
+		return errors.New("mot de passe trop long (max 72 octets — limite bcrypt)")
 	}
 	var hasLetter, hasOther bool
 	for _, r := range s {
@@ -210,7 +242,7 @@ func validPassword(s string) error {
 type authAuditEntry struct {
 	TS      string `json:"ts"`
 	Event   string `json:"event"`
-	UserRef string `json:"user,omitempty"`  // hashEmailForLog ou userID
+	UserRef string `json:"user,omitempty"` // hashEmailForLog ou userID
 	IP      string `json:"ip,omitempty"`
 	Success bool   `json:"success"`
 	Reason  string `json:"reason,omitempty"`
@@ -283,11 +315,11 @@ func reencryptTotpSecret(u *User) bool {
 		return false
 	}
 	if strings.HasPrefix(u.TOTPSecret, encPrefix) {
-		return false  // déjà chiffré
+		return false // déjà chiffré
 	}
 	// On a un secret legacy en clair. Le chiffrer.
 	u.TOTPSecret = encryptToken(u.TOTPSecret)
-	return strings.HasPrefix(u.TOTPSecret, encPrefix)  // confirme que le chiffrement a marché
+	return strings.HasPrefix(u.TOTPSecret, encPrefix) // confirme que le chiffrement a marché
 }
 
 func handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -347,6 +379,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	sid := createSession(u.ID)
 	setSessionCookie(w, r, sid)
 	setCSRFCookie(w, r)
+	metricRegister.Add(1)
 	logAuthEvent("register", hashEmailForLog(email), clientIP(r), true, "")
 	// Newly-registered users have no TOTPSecret yet, so when 2FA is required
 	// they will see needsEnroll2FA=true and the SPA will route them to the
@@ -356,6 +389,67 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		"twofaEnabled":   false,
 		"needsEnroll2FA": twofaRequired,
 	})
+}
+
+/* =============================================================
+ * Audit S3 : throttle des échecs de login PAR COMPTE.
+ *
+ * Le rate limit existant est par-IP (middleware.go) — un credential-stuffing
+ * distribué (botnet, rotation d'IP) le contourne. On ajoute un compteur
+ * d'échecs par email : au-delà de loginMaxFails dans loginFailWindow, on
+ * répond 429 sans même lancer bcrypt.
+ *
+ * Compromis assumé : ça autorise un lockout-DoS ciblé (un attaquant peut
+ * geler le login d'un email connu en provoquant des échecs). On le rend
+ * soft — fenêtre courte (15 min) qui s'auto-réinitialise, seuil large, et
+ * un login réussi efface immédiatement le compteur. Pour un service auto-
+ * hébergé à faible nombre d'utilisateurs, le bénéfice anti-stuffing dépasse
+ * le risque.
+ * ============================================================= */
+const (
+	loginMaxFails   = 20
+	loginFailWindow = 15 * time.Minute
+)
+
+var (
+	loginFailsMu sync.Mutex
+	loginFails   = map[string]*rlRec{} // emailLower → {count, resetAt}
+)
+
+// loginThrottled renvoie true si le compte a dépassé son quota d'échecs.
+func loginThrottled(email string) bool {
+	now := time.Now()
+	loginFailsMu.Lock()
+	defer loginFailsMu.Unlock()
+	rec, ok := loginFails[email]
+	if !ok || now.After(rec.resetAt) {
+		return false
+	}
+	return rec.count >= loginMaxFails
+}
+
+func recordLoginFail(email string) {
+	now := time.Now()
+	loginFailsMu.Lock()
+	defer loginFailsMu.Unlock()
+	// Sweep léger des entrées expirées au passage (map bornée par #emails actifs).
+	for k, v := range loginFails {
+		if now.After(v.resetAt) {
+			delete(loginFails, k)
+		}
+	}
+	rec, ok := loginFails[email]
+	if !ok || now.After(rec.resetAt) {
+		rec = &rlRec{resetAt: now.Add(loginFailWindow)}
+		loginFails[email] = rec
+	}
+	rec.count++
+}
+
+func clearLoginFails(email string) {
+	loginFailsMu.Lock()
+	delete(loginFails, email)
+	loginFailsMu.Unlock()
 }
 
 func handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -372,17 +466,36 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 
+	// Audit S3 : throttle par compte avant tout travail coûteux (bcrypt).
+	if loginThrottled(email) {
+		logAuthEvent("login", hashEmailForLog(email), clientIP(r), false, "account_throttled")
+		w.Header().Set("Retry-After", strconv.Itoa(int(loginFailWindow.Seconds())))
+		writeErr(w, http.StatusTooManyRequests, "trop de tentatives sur ce compte — réessaie plus tard")
+		return
+	}
+
 	usersMu.RLock()
 	u := usersByEm[email]
+	// Copie des champs sous le lock — d'autres handlers (change-password,
+	// 2FA setup/disable, admin toggle) écrivent ces champs sous usersMu ;
+	// lire le pointeur après RUnlock est un data race (`go test -race`).
+	hash := dummyHash
+	var totpEnc, uid, emailLower string
+	var isAdmin bool
+	if u != nil {
+		hash = []byte(u.PasswordHash)
+		totpEnc = u.TOTPSecret
+		uid = u.ID
+		emailLower = u.EmailLower
+		isAdmin = u.IsAdmin
+	}
 	usersMu.RUnlock()
 
 	// Always run bcrypt to keep timing roughly constant.
-	hash := dummyHash
-	if u != nil {
-		hash = []byte(u.PasswordHash)
-	}
 	err := bcrypt.CompareHashAndPassword(hash, []byte(req.Password))
 	if u == nil || err != nil {
+		recordLoginFail(email)
+		metricLoginFail.Add(1)
 		logAuthEvent("login", hashEmailForLog(email), clientIP(r), false, "bad_credentials")
 		writeErr(w, http.StatusUnauthorized, "identifiants invalides")
 		return
@@ -391,17 +504,39 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	// 2FA gate. We deliberately only check this AFTER password is valid — that
 	// way an attacker without password gets the same "identifiants invalides"
 	// response and can't enumerate which accounts have 2FA enabled.
-	if u.TOTPSecret != "" {
+	if totpEnc != "" {
 		if req.TOTPCode == "" {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{
 				"error": "code 2FA requis", "need2fa": true,
 			})
 			return
 		}
-		if !verifyTOTP(getUserTotpSecret(u), strings.TrimSpace(req.TOTPCode)) {
-			logAuthEvent("login", hashEmailForLog(email), clientIP(r), false, "bad_totp")
-			writeErr(w, http.StatusUnauthorized, "code 2FA invalide")
-			return
+		plainSecret, derr := decryptToken(totpEnc)
+		if derr != nil {
+			log.Printf("login: decrypt TOTP secret for user %s: %v", uid, derr)
+		}
+		// verifyTOTPForUser inclut la protection anti-replay : un code déjà
+		// consommé (même counter) est refusé même s'il est encore dans la
+		// fenêtre de dérive ±1 step.
+		totpOK := derr == nil && verifyTOTPForUser(uid, plainSecret, strings.TrimSpace(req.TOTPCode))
+		if !totpOK {
+			// Fallback : le code saisi est peut-être un code de RÉCUPÉRATION
+			// (téléphone perdu). On le consomme (usage unique) sous le lock.
+			recovered := false
+			usersMu.Lock()
+			if u2 := usersByID[uid]; u2 != nil {
+				recovered = consumeRecoveryCode(u2, req.TOTPCode)
+			}
+			usersMu.Unlock()
+			if !recovered {
+				recordLoginFail(email)
+				logAuthEvent("login", hashEmailForLog(email), clientIP(r), false, "bad_totp")
+				writeErr(w, http.StatusUnauthorized, "code 2FA invalide")
+				return
+			}
+			saveUsers() // persiste la consommation du code
+			metricRecoveryUsed.Add(1)
+			logAuthEvent("login_recovery", hashEmailForLog(email), clientIP(r), true, "recovery_code_used")
 		}
 	}
 
@@ -411,17 +546,19 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	if old := sessionID(r); old != "" {
 		destroySession(old)
 	}
-	sid := createSession(u.ID)
+	sid := createSession(uid)
 	setSessionCookie(w, r, sid)
 	setCSRFCookie(w, r)
-	logAuthEvent("login", hashEmailForLog(u.EmailLower), clientIP(r), true, "")
+	clearLoginFails(email) // Audit S3 : succès → on reset le compteur d'échecs.
+	metricLoginOK.Add(1)
+	logAuthEvent("login", hashEmailForLog(emailLower), clientIP(r), true, "")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":             true,
-		"userId":         u.ID,
-		"email":          u.EmailLower,
-		"isAdmin":        u.IsAdmin,
-		"twofaEnabled":   u.TOTPSecret != "",
-		"needsEnroll2FA": twofaRequired && u.TOTPSecret == "",
+		"userId":         uid,
+		"email":          emailLower,
+		"isAdmin":        isAdmin,
+		"twofaEnabled":   totpEnc != "",
+		"needsEnroll2FA": twofaRequired && totpEnc == "",
 	})
 }
 
@@ -448,12 +585,15 @@ func handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	usersMu.RLock()
 	u := usersByID[uid]
-	usersMu.RUnlock()
 	if u == nil {
+		usersMu.RUnlock()
 		clearSessionCookie(w, r)
 		writeJSON(w, http.StatusOK, map[string]any{"user": nil})
 		return
 	}
+	// La vue est construite ENTIÈREMENT sous le RLock — lire u.TOTPSecret /
+	// u.HealthConsent / u.AlgoOptOut après RUnlock serait un data race avec
+	// les handlers qui mutent ces champs sous usersMu.
 	// needsEnroll2FA tells the SPA to lock down to the enrollment screen until
 	// the user has set up TOTP. Server still enforces this on every protected
 	// endpoint via require2FA — the client flag is purely UX.
@@ -472,18 +612,21 @@ func handleMe(w http.ResponseWriter, r *http.Request) {
 		consentInfo["consentedAt"] = u.HealthConsent.ConsentedAt
 		consentInfo["consentedVersion"] = u.HealthConsent.Version
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"user": map[string]any{
-			"id":             u.ID,
-			"email":          u.EmailLower,
-			"isAdmin":        u.IsAdmin,
-			"twofaEnabled":   u.TOTPSecret != "",
-			"needsEnroll2FA": needsEnroll,
-			"healthConsent":  consentInfo,
-			"algoOptOut":     u.AlgoOptOut,
-			"createdAt":      u.CreatedAt,
-		},
-	})
+	userView := map[string]any{
+		"id":             u.ID,
+		"email":          u.EmailLower,
+		"isAdmin":        u.IsAdmin,
+		"twofaEnabled":   u.TOTPSecret != "",
+		"needsEnroll2FA": needsEnroll,
+		"healthConsent":  consentInfo,
+		"algoOptOut":     u.AlgoOptOut,
+		"createdAt":      u.CreatedAt,
+		// Nombre de codes de récupération restants — le client alerte quand
+		// il devient bas (≤ 2) pour inciter à régénérer.
+		"recoveryCodesLeft": len(u.RecoveryCodes),
+	}
+	usersMu.RUnlock()
+	writeJSON(w, http.StatusOK, map[string]any{"user": userView})
 }
 
 // handleHealthConsent records the user's explicit consent to process health
@@ -602,7 +745,7 @@ func ensureBootstrapAdmin() {
 			changed = true
 		}
 		if changed {
-			go saveUsers()
+			markUsersDirty()
 			// Audit M-05 : on tue aussi les autres sessions de cet admin pour
 			// qu'une éventuelle session active hijackée avant la rotation ne
 			// survive pas à la rotation.
@@ -627,17 +770,16 @@ func ensureBootstrapAdmin() {
 	}
 	usersByID[u.ID] = u
 	usersByEm[email] = u
-	go saveUsers()
+	markUsersDirty()
 	// Sentinel posé après création réussie.
 	_ = os.WriteFile(sentinel, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
 	log.Printf("bootstrap admin: created admin user %s (sentinel posted at %s)", hashEmailForLog(email), sentinel)
 }
 
 // getUserByID returns a user record pointer under a read lock, or nil.
+// (Migré sur userStore — audit modularité.)
 func getUserByID(id string) *User {
-	usersMu.RLock()
-	defer usersMu.RUnlock()
-	return usersByID[id]
+	return userStore.ByID(id)
 }
 
 // isAdminRequest returns true if the current request is authenticated as an admin.
@@ -736,20 +878,38 @@ func handle2FAStatus(w http.ResponseWriter, r *http.Request) {
 // This avoids a half-enrolled state where the secret exists but the user hasn't
 // proven they can read codes from it.
 var (
-	pending2FA   = map[string]string{}
+	pending2FA   = map[string]pending2FAEntry{}
 	pending2FAMu sync.Mutex
 )
+
+// pending2FAEntry : secret en attente de confirmation + horodatage.
+type pending2FAEntry struct {
+	secret    string
+	createdAt time.Time
+}
+
+// pending2FATTL borne la durée de vie d'un setup abandonné. Sans TTL, chaque
+// appel à /api/2fa/setup jamais suivi d'un verify laisse une entrée orpheline
+// en mémoire pour toujours. Le sweep se fait à chaque setup (pas de janitor
+// dédié — la map reste minuscule).
+const pending2FATTL = 15 * time.Minute
 
 func handle2FASetup(w http.ResponseWriter, r *http.Request) {
 	uid := currentUser(r)
 	usersMu.RLock()
 	u := usersByID[uid]
+	var emailLower string
+	has2FA := false
+	if u != nil {
+		emailLower = u.EmailLower
+		has2FA = u.TOTPSecret != ""
+	}
 	usersMu.RUnlock()
 	if u == nil {
 		writeErr(w, http.StatusUnauthorized, "non connecté")
 		return
 	}
-	if u.TOTPSecret != "" {
+	if has2FA {
 		writeErr(w, http.StatusConflict, "2FA déjà activé — désactive d'abord")
 		return
 	}
@@ -758,12 +918,19 @@ func handle2FASetup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "rand indisponible")
 		return
 	}
+	now := time.Now()
 	pending2FAMu.Lock()
-	pending2FA[uid] = secret
+	// Sweep des procédures expirées au passage.
+	for k, v := range pending2FA {
+		if now.Sub(v.createdAt) > pending2FATTL {
+			delete(pending2FA, k)
+		}
+	}
+	pending2FA[uid] = pending2FAEntry{secret: secret, createdAt: now}
 	pending2FAMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"secret":     secret,
-		"otpauthUrl": otpauthURL(u.EmailLower, secret),
+		"otpauthUrl": otpauthURL(emailLower, secret),
 	})
 }
 
@@ -782,20 +949,30 @@ func handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pending2FAMu.Lock()
-	secret, ok := pending2FA[uid]
+	entry, ok := pending2FA[uid]
+	if ok && time.Since(entry.createdAt) > pending2FATTL {
+		delete(pending2FA, uid)
+		ok = false
+	}
 	pending2FAMu.Unlock()
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "aucune procédure 2FA en cours — recommence")
+		writeErr(w, http.StatusBadRequest, "aucune procédure 2FA en cours (ou expirée) — recommence")
 		return
 	}
-	if !verifyTOTP(secret, strings.TrimSpace(req.Code)) {
+	// Anti-replay dès l'enrôlement : le counter consommé ici ne pourra pas
+	// être rejoué au login qui suit.
+	if !verifyTOTPForUser(uid, entry.secret, strings.TrimSpace(req.Code)) {
 		writeErr(w, http.StatusUnauthorized, "code invalide — réessaie")
 		return
 	}
+	// Génère aussi les codes de récupération (filet de sécurité si perte du
+	// téléphone). Le CLAIR n'est renvoyé qu'ici, une seule fois.
+	plainCodes, hashedCodes := generateRecoveryCodes()
 	usersMu.Lock()
 	var emailLower string
 	if u := usersByID[uid]; u != nil {
-		setUserTotpSecret(u, secret)
+		setUserTotpSecret(u, entry.secret)
+		u.RecoveryCodes = hashedCodes
 		emailLower = u.EmailLower
 	}
 	usersMu.Unlock()
@@ -804,7 +981,11 @@ func handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 	delete(pending2FA, uid)
 	pending2FAMu.Unlock()
 	logAuthEvent("2fa_setup", hashEmailForLog(emailLower), clientIP(r), true, "")
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		// Codes de récupération à noter MAINTENANT — non re-montrés ensuite.
+		"recoveryCodes": plainCodes,
+	})
 }
 
 // handle2FADisable removes the secret. Requires the user to provide either a
@@ -841,6 +1022,7 @@ func handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	usersMu.Lock()
 	if u2 := usersByID[uid]; u2 != nil {
 		setUserTotpSecret(u2, "")
+		u2.RecoveryCodes = nil // les codes de secours n'ont plus de sens sans 2FA
 	}
 	usersMu.Unlock()
 	saveUsers()
@@ -848,27 +1030,63 @@ func handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// handleDeleteAccount: destroys the user's data file, removes the user, kills sessions.
+// handleDeleteAccount: destroys the user's data file (and its backup), removes
+// the user, kills sessions.
+//
+// Exige le mot de passe courant : la suppression est irréversible, on ne veut
+// pas qu'un simple vol de session (onglet laissé ouvert, hijack) suffise à
+// détruire le compte — même standard de protection que handle2FADisable.
 func handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 	uid := currentUser(r)
 	if uid == "" {
-		writeErr(w, 401, "non connecté")
+		writeErr(w, http.StatusUnauthorized, "non connecté")
 		return
 	}
-	// remove data file
-	_ = os.Remove(dataPath(uid))
+	var req struct {
+		Password string `json:"password"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON invalide")
+		return
+	}
+	usersMu.RLock()
+	u := usersByID[uid]
+	var hash []byte
+	var emailLower string
+	if u != nil {
+		hash = []byte(u.PasswordHash)
+		emailLower = u.EmailLower
+	}
+	usersMu.RUnlock()
+	if u == nil {
+		writeErr(w, http.StatusUnauthorized, "non connecté")
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword(hash, []byte(req.Password)); err != nil {
+		logAuthEvent("delete_account", hashEmailForLog(emailLower), clientIP(r), false, "bad_password")
+		writeErr(w, http.StatusUnauthorized, "mot de passe incorrect")
+		return
+	}
+	// remove data file AND its .bak (RGPD art. 17 — l'effacement doit couvrir
+	// les backups, sinon les données de santé survivent sur disque).
+	deleteUserDataFiles(uid)
 	// remove user
 	usersMu.Lock()
-	if u := usersByID[uid]; u != nil {
-		delete(usersByEm, u.EmailLower)
+	if u2 := usersByID[uid]; u2 != nil {
+		delete(usersByEm, u2.EmailLower)
 		delete(usersByID, uid)
 	}
 	usersMu.Unlock()
 	saveUsers()
+	// Réécrit users.json.bak — le compte supprimé ne doit pas y survivre.
+	purgeUsersBackup()
 	// kill all sessions for this user
 	destroyAllSessionsFor(uid)
 	clearSessionCookie(w, r)
-	writeJSON(w, 200, map[string]any{"ok": true})
+	logAuthEvent("delete_account", hashEmailForLog(emailLower), clientIP(r), true, "")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // requireAuth wraps handlers that require a logged-in user. It also enforces

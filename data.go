@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -36,6 +38,17 @@ func userLock(id string) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
+// deleteUserDataFiles supprime le data file utilisateur ET son backup .bak.
+// RGPD art. 17 : le droit à l'effacement doit couvrir les backups générés
+// par writeJSONAtomic, sinon les données de santé survivent sur disque
+// jusqu'à 24h+ après la suppression du compte. Best-effort sur le .bak —
+// son absence n'est pas une erreur.
+func deleteUserDataFiles(uid string) {
+	p := dataPath(uid)
+	_ = os.Remove(p)
+	_ = os.Remove(p + ".bak")
+}
+
 // --- Handlers ---
 
 func handleLoadData(w http.ResponseWriter, r *http.Request) {
@@ -55,12 +68,30 @@ func handleLoadData(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "lecture impossible")
 		return
 	}
+	// Audit modularité action 8 : ETag fort sur le contenu du fichier.
+	// Le client renvoie If-None-Match → 304 sans re-parse ni re-transfert
+	// du payload (jusqu'à 512 KiB) — surtout utile en 4G. Le hash couvre
+	// les octets bruts : toute écriture via writeJSONAtomic change l'ETag.
+	sum := sha256.Sum256(b)
+	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "no-cache") // revalidation systématique, jamais de cache aveugle
+	if match := r.Header.Get("If-None-Match"); match == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	var v any
 	if err := json.Unmarshal(b, &v); err != nil {
 		writeErr(w, http.StatusInternalServerError, "données corrompues")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": v})
+	// Pas de writeJSON ici : il forcerait Cache-Control: no-store, ce qui
+	// interdirait au navigateur de stocker la réponse et tuerait la
+	// revalidation If-None-Match. no-cache = stockable mais TOUJOURS
+	// revalidé auprès du serveur avant usage.
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{"data": v})
 }
 
 func handleSaveData(w http.ResponseWriter, r *http.Request) {
@@ -77,9 +108,9 @@ func handleSaveData(w http.ResponseWriter, r *http.Request) {
 	usersMu.RUnlock()
 	if !hasConsent {
 		writeJSON(w, http.StatusForbidden, map[string]any{
-			"error":          "consentement aux données de santé requis",
-			"needsConsent":   true,
-			"policyVersion":  CurrentPrivacyVersion,
+			"error":         "consentement aux données de santé requis",
+			"needsConsent":  true,
+			"policyVersion": CurrentPrivacyVersion,
 		})
 		return
 	}

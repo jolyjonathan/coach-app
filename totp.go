@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -65,22 +66,61 @@ func totpAt(secretB32 string, t int64) (string, error) {
 
 // verifyTOTP accepts a code if it matches any step in [t-drift .. t+drift].
 // Returns true on success. We compare via constant-time equality on each step.
+//
+// NB : cette variante ne protège PAS contre le replay — utiliser
+// verifyTOTPForUser partout où un uid est disponible (login, enrôlement).
 func verifyTOTP(secretB32, code string) bool {
+	ok, _ := verifyTOTPWithCounter(secretB32, code)
+	return ok
+}
+
+// verifyTOTPWithCounter renvoie (true, counter) si le code matche un step de
+// la fenêtre [t-drift .. t+drift], où counter = t/30 du step qui a matché.
+func verifyTOTPWithCounter(secretB32, code string) (bool, int64) {
 	if len(code) != totpDigits {
-		return false
+		return false, 0
 	}
 	now := time.Now().Unix()
 	for i := -totpDrift; i <= totpDrift; i++ {
-		want, err := totpAt(secretB32, now+int64(i)*totpStep)
+		t := now + int64(i)*totpStep
+		want, err := totpAt(secretB32, t)
 		if err != nil {
-			return false
+			return false, 0
 		}
 		// Constant-time compare. hmac.Equal is fine on equal-length strings.
 		if hmac.Equal([]byte(want), []byte(code)) {
-			return true
+			return true, t / totpStep
 		}
 	}
-	return false
+	return false, 0
+}
+
+/* Anti-replay (RFC 6238 §5.2) : un code TOTP valide ne doit être accepté
+ * qu'une seule fois. Sans ça, un code observé (épaule, capture réseau sur un
+ * segment non-TLS, log accidentel) reste réutilisable pendant toute la fenêtre
+ * de dérive (~90 s). On mémorise le dernier counter consommé par utilisateur
+ * et on refuse tout counter ≤ — les counters étant monotones avec le temps,
+ * la map ne nécessite aucune purge (bornée par le nombre d'utilisateurs).
+ * In-memory : un restart oublie l'état, fenêtre de replay résiduelle de 90 s
+ * max post-reboot — acceptable vs la complexité d'une persistance. */
+var (
+	totpLastUsedMu sync.Mutex
+	totpLastUsed   = map[string]int64{} // uid → dernier counter accepté
+)
+
+// verifyTOTPForUser vérifie le code ET refuse le replay pour cet utilisateur.
+func verifyTOTPForUser(uid, secretB32, code string) bool {
+	ok, counter := verifyTOTPWithCounter(secretB32, code)
+	if !ok {
+		return false
+	}
+	totpLastUsedMu.Lock()
+	defer totpLastUsedMu.Unlock()
+	if last, seen := totpLastUsed[uid]; seen && counter <= last {
+		return false
+	}
+	totpLastUsed[uid] = counter
+	return true
 }
 
 // otpauthURL builds the standard otpauth:// URL that Authenticator apps consume.

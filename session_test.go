@@ -8,10 +8,7 @@ import (
 )
 
 func TestCreateAndResolveSession(t *testing.T) {
-	// Reset.
-	sessionsMu.Lock()
-	sessions = map[string]Session{}
-	sessionsMu.Unlock()
+	sessionStore.Reset()
 
 	sid := createSession("user-abc")
 	if len(sid) < 32 {
@@ -31,15 +28,13 @@ func TestCreateAndResolveSession(t *testing.T) {
 }
 
 func TestExpiredSessionPurged(t *testing.T) {
-	sessionsMu.Lock()
-	sessions = map[string]Session{
+	sessionStore.Seed(map[string]Session{
 		"stale": {
 			UserID:    "ghost",
 			CreatedAt: time.Now().Add(-48 * time.Hour),
 			ExpiresAt: time.Now().Add(-1 * time.Hour),
 		},
-	}
-	sessionsMu.Unlock()
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "stale"})
@@ -47,34 +42,27 @@ func TestExpiredSessionPurged(t *testing.T) {
 		t.Errorf("expired sid should resolve to empty, got %q", got)
 	}
 	// Side-effect: currentUser should have deleted the record.
-	sessionsMu.RLock()
-	_, still := sessions["stale"]
-	sessionsMu.RUnlock()
-	if still {
+	if _, still := sessionStore.Get("stale"); still {
 		t.Errorf("expired sid should have been purged on access")
 	}
 }
 
 func TestDestroyAllSessionsFor(t *testing.T) {
-	sessionsMu.Lock()
-	sessions = map[string]Session{
+	sessionStore.Seed(map[string]Session{
 		"a": {UserID: "u1", ExpiresAt: time.Now().Add(time.Hour)},
 		"b": {UserID: "u1", ExpiresAt: time.Now().Add(time.Hour)},
 		"c": {UserID: "u2", ExpiresAt: time.Now().Add(time.Hour)},
-	}
-	sessionsMu.Unlock()
+	})
 
 	destroyAllSessionsFor("u1")
 
-	sessionsMu.RLock()
-	defer sessionsMu.RUnlock()
-	if _, ok := sessions["a"]; ok {
+	if _, ok := sessionStore.Get("a"); ok {
 		t.Errorf("session a (u1) not destroyed")
 	}
-	if _, ok := sessions["b"]; ok {
+	if _, ok := sessionStore.Get("b"); ok {
 		t.Errorf("session b (u1) not destroyed")
 	}
-	if _, ok := sessions["c"]; !ok {
+	if _, ok := sessionStore.Get("c"); !ok {
 		t.Errorf("session c (u2) wrongly destroyed")
 	}
 }

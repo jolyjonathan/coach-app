@@ -11,10 +11,7 @@
 'use strict';
 
 /* =================== API CLIENT =================== */
-function getCookie(name) {
-  const m = document.cookie.match('(^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)');
-  return m ? decodeURIComponent(m[2]) : null;
-}
+// getCookie / csrfToken / escapeHtml vivent dans core.js (audit action 3).
 
 /* =================== MODAL SYSTEM (a11y) =================== */
 // Replaces the 17 native prompt/alert/confirm calls. Pattern matches what
@@ -174,6 +171,12 @@ function openModal(opts) {
     document.addEventListener('keydown', onKey, true);
     document.body.appendChild(back);
 
+    // Hook optionnel après insertion DOM — pour câbler des boutons custom
+    // dans le body (ex. copier/télécharger les codes de récupération).
+    if (typeof opts.onRender === 'function') {
+      try { opts.onRender(card); } catch (_) { /* best-effort */ }
+    }
+
     // Initial focus: first field if any, else primary button.
     const initial = back.querySelector('input, textarea')
                  || btnEls.find((_, i) => buttons[i].primary)
@@ -298,7 +301,7 @@ async function api(method, path, body) {
   if (method !== 'GET' && method !== 'HEAD') {
     // Audit M-03 : sur HTTPS le cookie est nommé __Host-coach_csrf
     // (durcissement préfixe). On lit les deux noms en fallback.
-    const t = getCookie('__Host-coach_csrf') || getCookie('coach_csrf');
+    const t = csrfToken();
     if (t) headers['X-CSRF-Token'] = t;
   }
   let res;
@@ -367,6 +370,10 @@ let currentUserIsAdmin = false;
 // the profile (Confidentialité & droits) flips this flag and POSTs to the
 // server; this var keeps the cached state for sync rendering.
 let currentUserAlgoOptOut = false;
+// État 2FA / codes de récupération (miroir de /api/me) pour le rendu sync
+// du panneau sécurité du profil.
+let currentUser2faEnabled = false;
+let currentUserRecoveryLeft = null;
 
 // setAdminLinkVisible toggles the "🛡 admin" shortcut in the header. Pure UI —
 // the server enforces admin authorization on every /api/admin/* call, so
@@ -376,338 +383,10 @@ function setAdminLinkVisible(on) {
   if (el) el.classList.toggle('hide', !on);
 }
 
-/* =================== EXERCISE LIBRARY =================== */
-// zones: chest, back, legs, shoulders, arms, core
-// desc : phrase courte pour expliquer l'exo
-// how  : comment bien le faire (2-3 phrases)
-// tips : points-clés / erreurs fréquentes
-const EX = [
-  {id:'squat',n:'Squat',z:['legs'],gear:['barre','halteres','pdc'],pain:['genou','dos'],
-   desc:'Flexion des jambes sur deux appuis, charge sur le haut du dos ou devant.',
-   how:"Pieds largeur épaules, pointes légèrement ouvertes. Descends en pliant hanches ET genoux, dos droit, poitrine haute. Remonte en poussant dans les talons.",
-   tips:['Genoux alignés sur la pointe des pieds, pas vers l\'intérieur.','Descends jusqu\'à cuisses parallèles au sol (ou plus bas si mobilité OK).','Ventre gainé pour protéger les lombaires.','Inspire en descendant, souffle en poussant.']},
-  {id:'goblet',n:'Goblet Squat',z:['legs'],gear:['halteres'],pain:['genou'],
-   desc:'Squat avec un haltère tenu devant la poitrine — idéal pour apprendre la technique.',
-   how:"Tiens un haltère à deux mains contre la poitrine, coudes pointés vers le bas. Squat classique, le poids t'aide à garder le buste droit.",
-   tips:['Coudes à l\'intérieur des genoux en bas.','Torse vertical — si tu bascules en avant, baisse la charge.','Bon exercice pour mobilité cheville/hanche.']},
-  {id:'fentes',n:'Fentes alternées',z:['legs'],gear:['pdc','halteres'],pain:['genou'],
-   desc:'Grand pas en avant, genou arrière vers le sol. Une jambe à la fois.',
-   how:"Grand pas vers l'avant, descends en pliant les deux genoux à 90°. Le genou arrière frôle le sol sans toucher. Remonte et change de jambe.",
-   tips:['Genou avant au-dessus de la cheville, pas devant l\'orteil.','Torse droit, regard à l\'horizon.','Alterne jambe droite / jambe gauche à chaque rep.']},
-  {id:'sdt',n:'Soulevé de terre',z:['back','legs'],gear:['barre'],pain:['dos'],
-   desc:'Soulève une charge du sol à la station debout — exercice roi pour chaîne postérieure.',
-   how:"Barre au-dessus du milieu du pied. Hanches hautes, dos neutre, barre proche des tibias. Pousse dans le sol en tirant les hanches en avant ; épaules et hanches montent ensemble.",
-   tips:['Dos JAMAIS arrondi — si ça lâche, baisse la charge.','Barre qui frôle les jambes tout le mouvement.','Verrouille hanches/genoux en haut sans hyperextension lombaire.','Si mal au dos, arrête et passe au SDT roumain avec haltères.']},
-  {id:'sdtrm',n:'SDT roumain',z:['back','legs'],gear:['barre','halteres'],pain:['dos'],
-   desc:'Soulevé de terre jambes quasi-tendues — cible ischios et fessiers.',
-   how:"Départ debout, charge devant. Pousse les hanches en arrière (pas les genoux qui plient), descends la charge le long des jambes jusqu'à sentir l'étirement des ischios. Remonte par contraction des fessiers.",
-   tips:['Genoux déverrouillés mais quasi-tendus (pas de flexion).','Dos parfaitement neutre — c\'est l\'exercice qui te l\'apprend.','Descente jusqu\'au milieu du tibia environ, selon souplesse.']},
-  {id:'hipthrust',n:'Hip thrust',z:['legs'],gear:['barre','halteres','pdc'],needs:['banc'],pain:[],
-   desc:'Poussée de hanches en pont, épaules sur un banc — meilleur pour les fessiers.',
-   how:"Épaules contre un banc bas, pieds à plat au sol. Charge sur le pli des hanches. Pousse les hanches vers le plafond jusqu'à aligner genoux-hanches-épaules. Contracte les fessiers 1s en haut.",
-   tips:['Menton rentré, regard vers les genoux.','Pieds écartés largeur hanches, bien à plat.','Évite de cambrer les lombaires — c\'est le fessier qui travaille.']},
-  {id:'dc',n:'Développé couché',z:['chest','arms'],gear:['barre','halteres'],needs:['banc'],pain:['epaule'],
-   desc:'Pousser une charge au-dessus de la poitrine, allongé sur un banc.',
-   how:"Allongé sur le banc, pieds au sol, omoplates serrées. Barre (ou haltères) au-dessus du sternum, coudes à ~45° du corps. Descends jusqu'à frôler la poitrine, remonte en poussant droit.",
-   tips:['Omoplates serrées/retroussées pendant tout le mouvement — stabilise l\'épaule.','Coudes ni collés au corps ni à 90° : ~45° protège l\'épaule.','Jamais de rebond sur la poitrine.','Si tu charges lourd, un pareur est utile.']},
-  {id:'pompes',n:'Pompes',z:['chest','arms','core'],gear:['pdc'],pain:['epaule','poignet'],
-   desc:'Poussée du corps au sol sur les mains — le basique du haut du corps.',
-   how:"Mains légèrement plus larges que les épaules, corps aligné tête-talons. Descends en gardant les coudes à ~45°, poitrine vers le sol. Pousse pour remonter sans casser l'alignement.",
-   tips:['Abdos gainés — pas de banane ni de cul en l\'air.','Si trop dur : pompes sur les genoux ou inclinées sur un meuble.','Coudes pas trop ouverts (épaules) ni trop serrés (triceps dominants).']},
-  {id:'dip',n:'Dips',z:['chest','arms'],gear:['pdc'],pain:['epaule'],
-   desc:'Poussée verticale entre deux barres parallèles — pectoraux bas + triceps.',
-   how:"Bras tendus sur deux barres, corps suspendu. Descends en pliant les coudes jusqu'à ~90°, buste légèrement penché en avant pour pecs (ou vertical pour triceps). Remonte.",
-   tips:['Descente contrôlée — pas de chute.','Ne descends pas trop bas si l\'épaule gêne.','Débutant : dips sur chaise (pieds au sol) avant dips complets.']},
-  {id:'ecarte',n:'Écartés haltères',z:['chest'],gear:['halteres'],needs:['banc'],pain:['epaule'],
-   desc:'Ouverture des bras à l\'horizontale, allongé — isolation pectoraux.',
-   how:"Allongé sur le banc, haltères au-dessus de la poitrine, bras légèrement fléchis. Écarte les bras en arc de cercle jusqu'à sentir l'étirement. Remonte par contraction des pecs.",
-   tips:['Coudes verrouillés en flexion légère — ne se plient pas pendant le mouvement.','Charges modérées : c\'est un exo d\'isolation, pas de record.','Descente jusqu\'au plan du banc, pas plus bas (épaule).']},
-  {id:'tract',n:'Tractions',z:['back','arms'],gear:['traction'],pain:['epaule','coude'],
-   desc:'Se hisser à une barre fixe — exercice roi pour le dos.',
-   how:"Prise supination (paumes vers soi) ou pronation (dos des mains vers soi), largeur épaules. Tire jusqu'à passer le menton au-dessus. Descente contrôlée jusqu'à bras quasi-tendus.",
-   tips:['Omoplates serrées d\'abord, puis les bras tirent.','Pas de kipping (mouvement de hanches) si objectif muscle.','Trop dur ? → tractions assistées élastique ou tirage vertical.']},
-  {id:'row',n:'Rowing buste penché',z:['back','arms'],gear:['barre','halteres'],pain:['dos'],
-   desc:'Tirer une charge vers le ventre, buste incliné — dos épais.',
-   how:"Buste penché à 30-45°, dos neutre, genoux légèrement pliés. Tire la charge vers le bas du ventre, coudes près du corps. Pause 1s, redescends contrôlé.",
-   tips:['Dos GARDÉ neutre — si ça tire sur les lombaires, charge trop lourde.','Tire avec les coudes, pas avec les bras.','Pause en haut pour sentir la contraction dorsale.']},
-  {id:'rowelast',n:'Rowing élastique',z:['back','arms'],gear:['elastiques'],pain:[],
-   desc:'Rowing assis avec un élastique — alternative sûre au buste penché.',
-   how:"Assis au sol, élastique autour des pieds, dos droit. Tire les poignées vers le nombril, coudes près du corps, épaules basses. Relâche contrôlé.",
-   tips:['Dos droit tout le mouvement, poitrine ouverte.','Tire jusqu\'à ce que les coudes dépassent le torse.','Super pour apprendre le geste avant de charger.']},
-  {id:'tirage',n:'Tirage nuque élastique',z:['back'],gear:['elastiques'],pain:[],
-   desc:'Tirage vertical avec élastique fixé en hauteur — simule le lat pull-down.',
-   how:"Élastique fixé en hauteur. Agenouillé ou assis, tire les poignées vers les épaules, coudes qui descendent sur les côtés. Contracte le dos en bas du mouvement.",
-   tips:['Évite de tirer derrière la nuque (risque épaule) — devant la poitrine.','Torse légèrement incliné en arrière.','Omoplates qui descendent et se rapprochent.']},
-  {id:'militaire',n:'Développé militaire',z:['shoulders','arms'],gear:['barre','halteres'],pain:['epaule'],
-   desc:'Pousser une charge au-dessus de la tête, debout — épaules solides.',
-   how:"Debout, charge au niveau des épaules (devant). Pousse verticalement jusqu'à bras tendus au-dessus de la tête. Descends contrôlé au niveau du menton / épaules.",
-   tips:['Abdos/fessiers gainés — pas de cambrure lombaire.','Pousse DROIT au-dessus de la tête, pas devant.','Si douleur épaule, essaye l\'arnold press (haltères avec rotation).']},
-  {id:'lateraux',n:'Élévations latérales',z:['shoulders'],gear:['halteres','elastiques'],pain:['epaule'],
-   desc:'Élever les bras sur les côtés — isole les deltoïdes latéraux.',
-   how:"Debout, haltères le long du corps, léger buste vers l'avant. Élève les bras sur les côtés jusqu'à l'horizontale, coudes légèrement pliés. Descends contrôlé.",
-   tips:['Charges légères — priorité à la forme, pas au poids.','Coude au-dessus du poignet à la fin du mouvement.','N\'élève PAS au-dessus de l\'horizontale (pincement épaule).']},
-  {id:'curl',n:'Curl biceps',z:['arms'],gear:['halteres','barre','elastiques'],pain:['coude'],
-   desc:'Flexion du coude avec charge — isole les biceps.',
-   how:"Debout, coudes collés au corps. Plie les bras pour ramener la charge vers les épaules, contraction en haut. Descends LENTEMENT (3s) pour maximiser.",
-   tips:['Coudes FIXES près du corps — pas de balancer.','Poignets neutres, pas cassés en arrière.','Pas besoin de charger lourd : cherche la contraction, pas le record.']},
-  {id:'triceps',n:'Extension triceps',z:['arms'],gear:['halteres','elastiques'],pain:['coude'],
-   desc:'Extension du coude, bras au-dessus de la tête — isole les triceps.',
-   how:"Debout ou assis, un haltère tenu à deux mains au-dessus de la tête. Plie les coudes pour descendre la charge derrière la tête. Remonte en tendant les bras.",
-   tips:['Coudes pointés vers le plafond, fixes — seul l\'avant-bras bouge.','Mouvement contrôlé — pas de à-coups.','Alternative : kick-back haltère (buste penché).']},
-  {id:'gainage',n:'Gainage (planche)',z:['core'],gear:['pdc'],pain:[],timed:true,floor:true,
-   desc:'Position immobile sur avant-bras et pointes de pieds — renforce la sangle abdo-lombaire.',
-   how:"Avant-bras au sol, coudes sous les épaules, corps aligné tête-talons. Gaine abdos, fessiers, et ne laisse pas les hanches tomber ni monter. Respire calmement.",
-   tips:['Alignement PARFAIT : si les fesses montent ou tombent, arrête.','Regard vers le sol, nuque alignée avec le dos.','Mieux vaut 30s parfaites que 2min avachies.']},
-  {id:'crunch',n:'Crunch',z:['core'],gear:['pdc'],pain:['dos'],
-   desc:'Enroulement du buste, allongé dos au sol — grand droit abdo.',
-   how:"Allongé, genoux pliés, pieds au sol. Mains croisées sur la poitrine. Enroule le buste en décollant les omoplates du sol (pas tout le dos). Redescends contrôlé.",
-   tips:['On n\'arrache PAS la nuque avec les mains.','Petit mouvement — juste les omoplates qui décollent.','Souffle en montant, inspire en descendant.']},
-  {id:'mountain',n:'Mountain climbers',z:['core','legs'],gear:['pdc'],pain:['poignet'],
-   desc:'Alternance rapide de genoux vers la poitrine en position de pompes — cardio + core.',
-   how:"Position de pompes (bras tendus). Amène alternativement un genou vers la poitrine, l'autre reste en arrière. Alterne rapidement sans casser l'alignement du dos.",
-   tips:['Hanches qui restent STABLES — pas de yoyo.','Rythme soutenu pour l\'effet cardio.','Si poignets sensibles : appuis sur les poings ou parallettes.']},
-  {id:'kbswing',n:'Kettlebell swing',z:['legs','back','core'],gear:['kettlebell'],pain:['dos'],
-   desc:'Balancement explosif d\'une kettlebell entre les jambes — chaîne postérieure + cardio.',
-   how:"Pieds largeur épaules, KB tenue à deux mains devant. Hinge des hanches (pas un squat), propulse la KB en avant avec une poussée de bassin. Laisse-la revenir en swing contrôlé.",
-   tips:['C\'est les hanches qui propulsent, pas les bras.','Dos neutre pendant tout le mouvement.','Arrête à hauteur des épaules (swing russe), pas au-dessus.']},
-  {id:'kbgoblet',n:'Goblet KB Squat',z:['legs'],gear:['kettlebell'],pain:['genou'],
-   desc:'Squat en tenant une kettlebell contre la poitrine.',
-   how:"KB tenue par les cornes contre la poitrine, coudes bas. Squat classique, le poids devant t'aide à garder le buste droit. Descente profonde possible.",
-   tips:['Coudes à l\'intérieur des genoux en bas.','Très bon pour apprendre la mobilité.']},
-  {id:'trxrow',n:'TRX rowing',z:['back','arms'],gear:['trx'],pain:[],
-   desc:'Tirage horizontal suspendu aux sangles — dos sans charge.',
-   how:"Sangles à hauteur de hanches, saisis les poignées, incline-toi en arrière corps droit. Tire la poitrine vers les mains, coudes près du corps. Plus les pieds sont avancés, plus c'est dur.",
-   tips:['Corps gainé comme une planche inversée.','Omoplates qui se serrent en tirant.','Règle la difficulté en reculant ou avançant les pieds.']},
-  {id:'trxpush',n:'TRX pompes',z:['chest','core','arms'],gear:['trx'],pain:['epaule','poignet'],
-   desc:'Pompes avec les mains dans les sangles — instabilité → plus de core.',
-   how:"Mains dans les poignées TRX à hauteur poitrine (sangles basses). Corps droit, pompes classiques. Plus les sangles sont basses, plus c'est dur.",
-   tips:['Abdos bien gainés — le TRX instable amplifie les défauts.','Mouvement lent et contrôlé.']},
-  {id:'dcincline',n:'Développé incliné',z:['chest','shoulders','arms'],gear:['halteres','barre'],needs:['banc'],pain:['epaule'],
-   desc:'Développé couché avec banc incliné à 30-45° — cible haut de pecs.',
-   how:"Banc incliné à 30-45°. Omoplates serrées, coudes à ~45°, descends jusqu'à la poitrine haute, remontes droit au-dessus.",
-   tips:['Plus le banc est incliné, plus les épaules bossent (limite à 45°).','Ne cambre pas les lombaires pour tricher.']},
-  {id:'bulgare',n:'Fente bulgare',z:['legs'],gear:['pdc','halteres','kettlebell'],needs:['banc'],pain:['genou'],unilateral:true,
-   desc:'Fente avec le pied arrière surélevé sur un banc — unilatéral intense.',
-   how:"Pied arrière sur un banc derrière toi, pied avant un grand pas devant. Descends en pliant le genou avant, torse droit. Remonte en poussant dans le talon avant.",
-   tips:['Genou avant aligné sur la pointe du pied.','Torse vertical, charge sur la jambe avant.','Exercice dur : commence poids du corps.']},
-
-  /* ============ CALISTHÉNIE / POIDS DU CORPS ============
-   * Utilisables partout — chez soi, en extérieur, en park, ou en salle.
-   * Beaucoup ciblent des zones peu couvertes par le matériel classique. */
-  {id:'pistol',n:'Pistol squat',z:['legs','core'],gear:['pdc'],pain:['genou'],unilateral:true,
-   desc:'Squat sur une seule jambe, l\'autre tendue devant — unilatéral extrême.',
-   how:"Debout sur une jambe, l\'autre tendue devant toi. Descends en pliant le genou, buste légèrement penché pour garder l\'équilibre. Remonte en poussant dans le talon.",
-   tips:['Tiens un pilier / TRX / élastique au début pour équilibrer.','Progresse d\'abord par des box squats unilatéraux.','Pied d\'appui bien à plat, genou aligné.']},
-  {id:'jumpsquat',n:'Squat sauté',z:['legs'],gear:['pdc'],pain:['genou','dos'],
-   desc:'Squat explosif avec saut — puissance et cardio.',
-   how:"Squat classique, puis détends les jambes pour sauter verticalement. Réceptionne-toi genoux souples, enchaîne directement sur la descente du squat suivant.",
-   tips:['Atterris doucement, pas de choc sec sur les genoux.','Bras vers le haut pour le momentum.','Si genoux sensibles : passe en squat simple.']},
-  {id:'boxjump',n:'Box jump',z:['legs'],gear:['pdc'],pain:['genou'],
-   desc:'Saut explosif sur une caisse / banc solide — puissance.',
-   how:"Face à une caisse stable (30-60cm). Fléchis, lance les bras en arrière puis saute pour te poser les deux pieds sur la caisse. Redescends en marchant, pas en sautant.",
-   tips:['Atterris PLIÉ, pas raide — absorbe.','Redescends marche par marche pour ménager les tendons.','Hauteur progressive — sécurité avant record.']},
-  {id:'stepup',n:'Montées sur banc',z:['legs'],gear:['pdc','halteres','kettlebell'],needs:['banc'],pain:['genou'],unilateral:true,
-   desc:'Monter sur un banc une jambe à la fois — fonctionnel et unilatéral.',
-   how:"Pied entier posé sur le banc. Pousse dans le talon pour monter debout, ramène l\'autre pied à côté. Redescends contrôlé. Alterne à chaque répétition ou fais une série par jambe.",
-   tips:['Pas d\'élan avec la jambe arrière — c\'est la jambe avant qui fait tout.','Banc à hauteur de genou environ.','Charge tenue le long du corps avec haltères.']},
-  {id:'gluteb',n:'Glute bridge',z:['legs','core'],gear:['pdc','halteres','barre'],pain:[],
-   desc:'Pont fessier au sol — fessiers et chaîne postérieure sans matériel.',
-   how:"Allongé sur le dos, genoux pliés, pieds à plat proche des fessiers. Pousse les hanches vers le plafond en contractant les fessiers. Pause 1s en haut, redescends.",
-   tips:['Serre les fessiers en haut, pas les lombaires.','Menton rentré, nuque neutre.','Charge possible sur le pli des hanches.']},
-  {id:'wallsit',n:'Chaise contre mur',z:['legs'],gear:['pdc'],pain:['genou'],timed:true,
-   desc:'Position assise contre un mur, cuisses parallèles au sol — endurance quadriceps.',
-   how:"Dos collé au mur, descends en glissant jusqu\'à cuisses parallèles (genoux à 90°). Tiens la position. Respire calmement.",
-   tips:['Genoux exactement au-dessus des chevilles, pas devant.','Dos entièrement plaqué au mur.','Débutant : angle plus ouvert (moins bas).']},
-  {id:'mollet',n:'Mollets debout',z:['legs'],gear:['pdc','halteres','kettlebell'],pain:[],
-   desc:'Élévation sur pointes de pieds — gastrocnémiens.',
-   how:"Debout, pieds largeur hanches. Monte sur la pointe des pieds au maximum, pause 1s en haut, redescends contrôlé. Progression : une jambe à la fois ou sur une marche pour amplitude.",
-   tips:['Amplitude complète : pointe haute, talon plus bas que la marche.','Charge dans les mains pour progression.','3-4 séries de 15-20 reps pour résultat.']},
-  {id:'pompediam',n:'Pompes diamant',z:['chest','arms'],gear:['pdc'],pain:['epaule','poignet','coude'],
-   desc:'Pompes mains rapprochées en losange — triceps dominants.',
-   how:"Mains au sol pouces et index se touchant en forme de losange sous le sternum. Pompes classiques — coudes qui frôlent le torse en descendant.",
-   tips:['Exercice plus dur que les pompes normales : prends-le après une progression.','Coudes longs du corps, pas ouverts.','Genoux au sol pour démarrer.']},
-  {id:'pikepush',n:'Pike push-up',z:['shoulders','arms'],gear:['pdc'],pain:['epaule','poignet'],
-   desc:'Pompes en V inversé — préparation au handstand push-up.',
-   how:"Position de pompe, recule les pieds vers les mains, fesses hautes, corps en V. Plie les coudes pour amener le sommet du crâne vers le sol entre les mains. Pousse pour remonter.",
-   tips:['Plus les fesses sont hautes, plus c\'est les épaules qui bossent.','Pieds surélevés sur un banc = progression.','Objectif : handstand push-up contre un mur.']},
-  {id:'invrow',n:'Rowing inversé',z:['back','arms'],gear:['traction'],pain:['epaule'],
-   desc:'Rowing suspendu sous une barre basse — alternative aux tractions.',
-   how:"Barre à hauteur de hanches. Allonge-toi dessous, saisis la barre prise pronation largeur épaules, corps gainé droit. Tire la poitrine vers la barre, coudes près du corps. Redescends contrôlé.",
-   tips:['Plus les pieds sont avancés, plus c\'est dur.','Corps rigide comme une planche inversée.','Parfait en park sur une barre basse ou entre deux supports.']},
-  {id:'superman',n:'Superman',z:['back','core'],gear:['pdc'],pain:['dos'],timed:true,floor:true,
-   desc:'Extension lombaire bras et jambes tendus, allongé sur le ventre — lombaires et fessiers.',
-   how:"Allongé sur le ventre, bras tendus devant, jambes tendues. Décolle simultanément bras et jambes du sol en contractant lombaires et fessiers. Tiens 2s, redescends.",
-   tips:['Menton rentré, regard vers le sol — pas de cassure nuque.','Contraction fessiers ET lombaires ensemble.','Version timed : tenue 20-40s.']},
-  {id:'hollow',n:'Hollow body hold',z:['core'],gear:['pdc'],pain:['dos'],timed:true,floor:true,
-   desc:'Position \"banane inversée\" — gainage profond spécifique gym.',
-   how:"Allongé sur le dos, bas du dos plaqué au sol. Décolle simultanément épaules, bras (tendus derrière la tête) et jambes (tendues). Forme de banane inversée. Respire.",
-   tips:['Bas du dos COLLÉ au sol en permanence — si ça décolle, plie les genoux.','Bras le long des oreilles.','20-40s est déjà très bien.']},
-  {id:'sideplank',n:'Gainage latéral',z:['core'],gear:['pdc'],pain:['epaule'],timed:true,unilateral:true,floor:true,
-   desc:'Planche sur un avant-bras et un pied — obliques.',
-   how:"Sur le côté, avant-bras au sol coude sous l\'épaule, pieds empilés. Décolle les hanches du sol, corps aligné tête-pieds. Tiens. Change de côté.",
-   tips:['Hanches bien hautes — pas de cassure au niveau des abdos latéraux.','Épaule stable au-dessus du coude.','Facile : appui sur le genou plutôt que le pied.']},
-  {id:'birddog',n:'Bird-dog',z:['core','back'],gear:['pdc'],pain:[],
-   desc:'À quatre pattes, extension bras + jambe opposés — antigravitaire lombaire.',
-   how:"À quatre pattes, dos neutre. Tends simultanément le bras droit devant et la jambe gauche derrière jusqu\'à ligne droite. Pause 2s. Reviens et alterne.",
-   tips:['Hanches STABLES — pas de bascule gauche/droite.','Bras et jambe à l\'horizontale, pas plus haut.','Très bon pour lombalgie légère (anti-douleur).']},
-  {id:'deadbug',n:'Dead bug',z:['core'],gear:['pdc'],pain:[],
-   desc:'Allongé sur le dos, bras + jambe opposés s\'abaissent en alternance — stabilisation lombaire.',
-   how:"Allongé, bras tendus vers le plafond, jambes pliées hanches/genoux à 90°. Abaisse simultanément bras droit au-dessus de la tête et jambe gauche tendue vers le sol, sans toucher. Reviens, alterne.",
-   tips:['Bas du dos COLLÉ au sol tout le mouvement.','Mouvement lent et contrôlé.','Exercice roi pour activer le core profond.']},
-  {id:'rustwist',n:'Russian twist',z:['core'],gear:['pdc','halteres','kettlebell'],pain:['dos'],
-   desc:'Rotation du buste assis en V — obliques.',
-   how:"Assis, buste incliné en arrière ~45°, pieds décollés ou au sol. Mains jointes ou charge, tourne le buste à droite, touche à côté de la hanche, puis à gauche.",
-   tips:['Le mouvement vient du buste, pas seulement des bras.','Dos droit, pas arrondi — si ça tire les lombaires, reviens sans charge.','Pieds au sol si débutant.']},
-  {id:'hangleg',n:'Relevés jambes suspendu',z:['core'],gear:['traction'],pain:['epaule'],
-   desc:'Suspendu à une barre, remonte les jambes — abdos bas.',
-   how:"Suspendu bras tendus à une barre, corps gainé. Remonte les genoux à la poitrine (débutant) ou jambes tendues à l\'horizontale (avancé). Redescends contrôlé, pas de balancement.",
-   tips:['Pas de swing du corps — abdos uniquement.','Débutant : genoux pliés. Avancé : jambes tendues.','Très complet : grip, épaules, core.']},
-  {id:'burpee',n:'Burpees',z:['legs','chest','core'],gear:['pdc'],pain:['genou','epaule','poignet'],
-   desc:'Squat + pompe + saut enchaînés — full body cardio.',
-   how:"Debout → squat mains au sol → jette les pieds en arrière (position pompe) → fais une pompe → ramène les pieds sous toi → saute verticalement bras en l\'air. Enchaîne.",
-   tips:['Forme > vitesse : ne compromets pas la pompe.','Version soft : sans la pompe ni le saut.','Killer pour le cardio et la coordination.']},
-  {id:'highknee',n:'Montées de genoux',z:['legs','core'],gear:['pdc'],pain:['genou'],timed:true,
-   desc:'Courir sur place en montant haut les genoux — cardio et fléchisseurs.',
-   how:"Sur place, alterne rapidement genou gauche / genou droit à hauteur de hanches. Bras qui pompent comme en course. Rythme soutenu.",
-   tips:['Objectif : rapidité et hauteur de genoux.','Reste sur la pointe des pieds.','Excellent échauffement ou finisher cardio.']},
-
-  /* ============ MACHINES DE SALLE ============ */
-  {id:'legpress',n:'Presse à cuisses',z:['legs'],gear:['machine'],pain:['dos'],
-   desc:'Pousser une charge guidée avec les jambes, assis sur la machine — quadri/fessiers sans charger la colonne.',
-   how:"Assis dans la presse, dos plaqué, pieds largeur hanches à plat sur le plateau. Fléchis les genoux jusqu\'à ~90° sans décoller le bas du dos. Pousse pour tendre les jambes sans verrouiller les genoux.",
-   tips:['Pieds HAUT sur le plateau = plus de fessiers/ischios.','Pieds bas = plus de quadriceps.','Ne VERROUILLE jamais les genoux en haut.','Bon substitut au squat si dos fragile.']},
-  {id:'legext',n:'Leg extension',z:['legs'],gear:['machine'],pain:['genou'],
-   desc:'Extension des genoux assis sur une machine — isolation quadriceps.',
-   how:"Assis, chevilles derrière le rouleau, dos contre le dossier. Tends les jambes jusqu\'à la quasi-extension, pause 1s contraction, redescends lentement.",
-   tips:['Charge modérée — c\'est un exo d\'isolation.','Évite l\'extension complète verrouillée (usure rotulienne).','Mouvement lent, pas de à-coups.']},
-  {id:'legcurl',n:'Leg curl',z:['legs'],gear:['machine'],pain:[],
-   desc:'Flexion des genoux allongé ou assis, machine — isolation ischios.',
-   how:"Selon machine (allongée ou assise) : chevilles contre le rouleau, plie les genoux pour amener les talons vers les fesses. Pause 1s, redescends contrôlé.",
-   tips:['Hanches bien plaquées, pas de tricherie par cambrure.','Contraction 1s en haut pour sentir les ischios.','Fait bon duo avec leg extension pour équilibre quadri/ischios.']},
-  {id:'latpull',n:'Tirage vertical (poulie)',z:['back','arms'],gear:['machine'],pain:['epaule'],
-   desc:'Tirage d\'une barre vers la poitrine, assis sur la machine — dos large.',
-   how:"Assis, cuisses sous le pad, saisis la barre prise large pronation. Tire la barre vers la clavicule en serrant les omoplates, coudes qui descendent sur les côtés. Remonte contrôlé sans lâcher la tension.",
-   tips:['JAMAIS derrière la nuque (risque épaule).','Torse légèrement incliné en arrière ~20°.','Omoplates qui descendent EN PREMIER, puis les bras tirent.']},
-  {id:'cablerow',n:'Rowing assis poulie',z:['back','arms'],gear:['machine'],pain:['dos'],
-   desc:'Tirer une poignée vers le ventre, assis face à une poulie basse — dos épais.',
-   how:"Assis, pieds contre le cale-pieds, genoux légèrement pliés. Saisis la poignée, buste droit. Tire vers le nombril en serrant les omoplates, coudes près du corps. Relâche contrôlé.",
-   tips:['Dos neutre — pas d\'arrondi, pas d\'hyperextension.','Tire avec les coudes, pas avec les bras.','Pause 1s au point de contraction.']},
-  {id:'pecdeck',n:'Pec deck',z:['chest'],gear:['machine'],pain:['epaule'],
-   desc:'Rapprochement des bras sur machine — isolation pectoraux.',
-   how:"Assis, dos plaqué, coudes posés sur les pads à hauteur d\'épaules. Rapproche les pads devant toi en contractant les pecs. Pause 1s, relâche contrôlé.",
-   tips:['Coudes à hauteur d\'épaule, pas plus haut (pincement).','Charge modérée — isolation, pas record.','Excellent finisher pecs.']},
-  {id:'facepull',n:'Face pull',z:['shoulders','back'],gear:['machine','elastiques'],pain:[],
-   desc:'Tirage d\'une corde de poulie vers le visage — arrière d\'épaule et posture.',
-   how:"Poulie haute, corde avec poignées. Recule de 2 pas, tire vers le front, coudes hauts et larges. Écartement des mains à la fin. Relâche contrôlé.",
-   tips:['Coudes au-dessus des poignets — mouvement horizontal, pas de curl.','Charge légère, priorité à la contraction.','Un des meilleurs exos pour la santé d\'épaule.']},
-  {id:'tripush',n:'Triceps poulie',z:['arms'],gear:['machine'],pain:['coude'],
-   desc:'Pushdown triceps avec corde ou barre sur poulie haute — isolation.',
-   how:"Debout face à la poulie haute, coudes collés au corps. Pousse la corde vers le bas jusqu\'à extension complète des bras, écarte les poignets en bas pour la contraction. Remonte contrôlé.",
-   tips:['Coudes FIXES contre le corps — seul l\'avant-bras bouge.','Pause 1s en contraction basse.','Corde > barre pour amplitude et confort coude.']},
-  {id:'cablecurl',n:'Curl poulie',z:['arms'],gear:['machine'],pain:['coude'],
-   desc:'Curl biceps avec poulie basse — tension constante.',
-   how:"Debout face à la poulie basse, barre courbée ou poignées. Coudes collés au corps, curl vers les épaules, pause en contraction, redescente lente (3s).",
-   tips:['La poulie garde la tension même en bas du mouvement, contrairement aux haltères.','Coudes IMMOBILES au corps.','Charge légère-modérée, cherche la brûlure.']},
-
-  /* ============ ÉLASTIQUES — exercices portables chez soi ou au park ============ */
-  {id:'bandpa',n:'Pull-apart élastique',z:['shoulders','back'],gear:['elastiques'],pain:[],
-   desc:'Écartement d\'un élastique tendu devant soi — arrière d\'épaule et posture.',
-   how:"Debout, élastique tendu devant toi à hauteur de poitrine, bras tendus. Écarte les bras en les gardant tendus, amène l\'élastique contre la poitrine en serrant les omoplates. Relâche.",
-   tips:['Bras TENDUS pendant tout le mouvement.','Serre les omoplates fort en fin de course.','Exo anti-cyphose : fais-en tous les jours si tu bosses assis.']},
-  {id:'bandgm',n:'Good morning élastique',z:['back','legs'],gear:['elastiques'],pain:['dos'],
-   desc:'Flexion de hanches buste penché avec élastique sous les pieds — chaîne postérieure.',
-   how:"Élastique sous les deux pieds, anse autour du cou/nuque protégée. Genoux légèrement pliés. Pousse les hanches en arrière en penchant le buste à ~45°, dos NEUTRE. Remonte par contraction fessiers.",
-   tips:['Dos JAMAIS arrondi.','Mouvement de hanches, pas de dos.','Excellent échauffement SDT / bon debut calisthénie.']},
-  {id:'bandwalk',n:'Marche latérale élastique',z:['legs'],gear:['elastiques'],pain:[],
-   desc:'Pas chassés latéraux avec élastique autour des genoux ou chevilles — moyens fessiers.',
-   how:"Élastique autour des cuisses (au-dessus des genoux) ou chevilles. Léger squat, pieds largeur hanches. Fais 10 pas latéraux à droite, 10 à gauche, en gardant la tension sur l\'élastique.",
-   tips:['Genoux ne rentrent PAS vers l\'intérieur — c\'est le point clé.','Reste en position semi-squat tout le long.','Bruleur fessiers moyens — essentiel pour stabilité hanche.']},
-
-  /* ============ KETTLEBELL — supplément ============ */
-  {id:'kbpress',n:'Développé épaules KB',z:['shoulders','arms'],gear:['kettlebell'],pain:['epaule'],
-   desc:'Développé vertical avec une kettlebell par main — épaule stable.',
-   how:"KB en position rack (poignée contre la paume, cloche sur l\'avant-bras) à l\'épaule. Pousse verticalement jusqu\'à bras tendu, coude verrouillé. Redescends contrôlé en position rack.",
-   tips:['Poignet NEUTRE — pas cassé en arrière.','Gainage abdos/fessiers — pas de cambrure lombaire.','Une main à la fois ou bilateral selon matériel.']},
-  {id:'kbtgu',n:'Turkish get-up',z:['core','legs','shoulders'],gear:['kettlebell'],pain:['epaule','dos'],
-   desc:'Se relever du sol en tenant une KB au-dessus de la tête — full body, mobilité épaule.',
-   how:"Allongé sur le dos, KB tenue à bout de bras au-dessus de l\'épaule droite. En 6-7 étapes méthodiques (coude, main, pont, passage de jambe, fente, debout), relève-toi sans jamais baisser la KB. Reviens par la même séquence.",
-   tips:['LENT. Chaque étape doit être maîtrisée — c\'est technique, pas cardio.','Apprends à vide / avec chaussure, puis KB légère.','Bras VERTICAL tout le temps, regard sur la KB.','Un des meilleurs exos full body qui existe.']},
-
-  /* ============ PROPHYLAXIE — Nordic Hamstring (Petersen 2011) ============
-   * RCT princeps : -70% d'incidence de claquage ischios chez les footeurs
-   * danois avec 3×10 reps eccentriques, 2×/sem. Méta-analyses confirment
-   * (van Dyk 2019 : -51% blessures ischios sur 14 RCT). Coûte rien, prend
-   * 5 min, protège un muscle qu'on déchire toujours au pire moment. */
-  {id:'nordic',n:'Nordic Hamstring',z:['legs','core'],gear:['pdc'],needs:['ancrage'],pain:['dos'],unilateral:false,
-   desc:'Excentrique d\'ischios à genoux, pieds bloqués — prévention claquages ischios.',
-   how:"À genoux sur un tapis, chevilles bloquées sous quelque chose (banc, partenaire, machine). Mains croisées sur la poitrine. Descends LENTEMENT le buste vers l'avant en gardant le corps gainé (3-5s par rep) en résistant au maximum avec les ischios. Rattrape avec les mains au dernier moment, repousse avec les bras pour revenir.",
-   tips:['Phase eccentrique LENTE — c\'est elle qui protège, pas la remontée.','Démarre par 2-3 reps même si tu peux faire plus : courbatures massives sinon.','Progression : amplitude (descendre plus bas) avant le nombre de reps.','3×6-10 reps, 2×/sem, jamais le jour d\'une grosse séance jambes.']},
-];
-
-const EX_BY_ID = Object.fromEntries(EX.map(e => [e.id, e]));
-// Expose sur window pour que snacks.js (chargé avant) puisse résoudre les
-// noms d'exos référencés. Pas un module système — juste une convention.
-window.EX_BY_ID = EX_BY_ID;
-
-// Does this exercise accept added weight? True for barre/halteres/kettlebell/machine.
-// Bodyweight (pdc), tractions (traction), elastic (elastiques), TRX exos → no weight column.
-// Machines use a pin/stack and benefit from the same progressive-overload math,
-// though we don't have a user-declared max for them (capWeight won't cap them).
-function supportsWeight(exoId) {
-  const e = EX_BY_ID[exoId];
-  if (!e || e.timed) return false;
-  return e.gear.some(g => g === 'barre' || g === 'halteres' || g === 'kettlebell' || g === 'machine');
-}
-
-// Pour les exos avec haltères : indique si la charge prescrite s'applique à
-// 1 haltère (tenu à 2 mains, ou posé sur les hanches), ou 2 haltères (un par
-// main, donc charge totale = 2× la valeur affichée).
-//
-// Pourquoi pas une propriété directement sur chaque exo ? Pour garder le tableau
-// EX lisible. Le défaut implicite est 2 (cas le plus courant), seuls les exos
-// "à 1 haltère" sont listés ici.
-//
-// Le kg affiché reste toujours "par haltère" — cette annotation ne change pas
-// la valeur, elle clarifie juste son interprétation pour l'utilisateur.
-const DUMBBELL_HANDS_ONE = new Set([
-  'goblet',     // haltère tenu à 2 mains contre la poitrine
-  'triceps',    // extension overhead à 2 mains
-  'hipthrust',  // posé sur le pli des hanches
-  'gluteb',     // posé sur le pli des hanches
-  'rustwist',   // tenu à 2 mains devant le buste
-]);
-
-function dbHandsFor(exoId) {
-  const e = EX_BY_ID[exoId];
-  if (!e || !e.gear.includes('halteres')) return null;
-  return DUMBBELL_HANDS_ONE.has(exoId) ? 1 : 2;
-}
-
-// Petit libellé affiché à côté du poids pour préciser 1 vs 2 haltères.
-// Retourne '' si l'exo n'utilise pas d'haltères (cas barbell/machine pur).
-function dumbbellNote(exoId) {
-  const h = dbHandsFor(exoId);
-  if (h == null) return '';
-  return h === 1 ? '1 haltère (à 2 mains)' : '2 haltères (un par main)';
-}
-
-// Cap a suggested weight by the user's declared max (per-exo, based on gear).
-function capWeight(exoId, weight) {
-  if (weight == null) return null;
-  const e = EX_BY_ID[exoId];
-  if (!e) return weight;
-  const p = S.profile || {};
-  const caps = [];
-  if (e.gear.includes('barre') && p.maxBarre)     caps.push(p.maxBarre);
-  if (e.gear.includes('halteres') && p.maxHalteres) caps.push(p.maxHalteres);
-  if (caps.length === 0) return weight;
-  return Math.min(weight, Math.max(...caps));
-}
-
-
-/* Exercise illustrations: disabled. Stick-figure poses did not read cleanly
- * enough to help. If/when we ship real photos, re-enable via this helper. */
-function renderExoIllustration(_exoId) { return ''; }
+/* =================== EXERCISE LIBRARY ===================
+ * Deplacee dans exercises-data.js (audit modularite, action 4).
+ * EX, EX_BY_ID, supportsWeight, capWeight... y sont definis et
+ * partages via la portee globale. */
 
 /* =================== VIDEO DEMOS ===================
  * Every exercise in EX can optionally set `yt: 'YOUTUBE_ID'` (the 11-char ID
@@ -809,7 +488,8 @@ function activateYouTubePlaceholder() {
 
 /* =================== VIEW ROUTING =================== */
 const ALL_VIEWS = ['viewAuth','viewEnroll2FA','viewConsent','viewOnboarding','viewHome','viewSession','viewQuestion',
-                   'viewHistory','viewTimer','viewTap','viewGuide','viewExerciseDetail','viewInsights'];
+                   'viewHistory','viewTimer','viewTap','viewGuide','viewExerciseDetail','viewInsights',
+                   'viewTrends','viewCoach'];
 
 // Map view id → page title fragment. Used to keep document.title in sync
 // with the current screen so screen-reader users hear the new context and
@@ -819,7 +499,9 @@ const VIEW_TITLES = {
   viewEnroll2FA:      'Vérification 2 étapes',
   viewConsent:        'Consentement',
   viewOnboarding:     'Profil',
-  viewHome:           'Accueil',
+  viewHome:           'Aujourd\'hui',
+  viewTrends:         'Tendances',
+  viewCoach:          'Coach',
   viewSession:        'Séance',
   viewQuestion:       'Bilan',
   viewHistory:        'Historique',
@@ -853,7 +535,9 @@ function show(id) {
     b.classList.remove('active');
     b.removeAttribute('aria-current');
   });
-  const map = {viewHome:'home', viewSession:'session', viewHistory:'history', viewOnboarding:'onboarding'};
+  const map = {viewHome:'home', viewTrends:'trends', viewCoach:'coach', viewOnboarding:'onboarding',
+               // viewHistory s'ouvre depuis Tendances → on garde l'onglet Tendances actif.
+               viewHistory:'trends'};
   const tab = map[id];
   if (tab) {
     const b = document.querySelector(`nav.bottom button[data-tab="${tab}"]`);
@@ -890,8 +574,8 @@ document.querySelectorAll('nav.bottom button[data-tab]').forEach(b => {
   b.addEventListener('click', () => {
     const t = b.dataset.tab;
     if (t === 'home') openHome();
-    else if (t === 'session') openSession();
-    else if (t === 'history') openHistory();
+    else if (t === 'trends') openTrends();
+    else if (t === 'coach') openCoach();
     else if (t === 'onboarding') openOnboarding();
   });
 });
@@ -904,6 +588,85 @@ if (fabStart) fabStart.addEventListener('click', () => {
   haptic(HAPTIC.tap);
   openSession();
 });
+
+/* =================== REFONTE MOBILE — câblage =================== */
+
+// Check-in repliable : toggle sur le head. Repliée par défaut (l'accueil
+// reste orienté action) ; le mini-anneau readiness la déplie + scroll.
+function toggleScienceCard(forceOpen) {
+  const card = document.getElementById('scienceCard');
+  const head = document.getElementById('scienceCardHead');
+  if (!card || !head) return;
+  const open = forceOpen === true ? true : !card.classList.contains('open');
+  card.classList.toggle('open', open);
+  head.setAttribute('aria-expanded', String(open));
+}
+const scienceHead = document.getElementById('scienceCardHead');
+if (scienceHead) scienceHead.addEventListener('click', () => toggleScienceCard());
+const readyRingBtn = document.getElementById('readyRing');
+if (readyRingBtn) readyRingBtn.addEventListener('click', () => {
+  toggleScienceCard(true);
+  const card = document.getElementById('scienceCard');
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
+// Segmented control Tendances : Charge / Force / Activité.
+const trendsSeg = document.getElementById('trendsSeg');
+if (trendsSeg) trendsSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-pane]');
+  if (!btn) return;
+  trendsSeg.querySelectorAll('button').forEach(b => {
+    const on = b === btn;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-selected', String(on));
+    // Roving tabindex : seul l'onglet actif est dans l'ordre de tabulation.
+    b.setAttribute('tabindex', on ? '0' : '-1');
+  });
+  const pane = btn.dataset.pane;
+  const panes = { charge: 'paneCharge', force: 'paneForce', activite: 'paneActivite' };
+  for (const k in panes) {
+    const el = document.getElementById(panes[k]);
+    if (el) el.classList.toggle('hide', k !== pane);
+  }
+});
+// Navigation clavier du tablist (motif ARIA : ←/→ déplacent l'onglet actif).
+if (trendsSeg) trendsSeg.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  const tabs = Array.from(trendsSeg.querySelectorAll('button[role="tab"]'));
+  const cur = tabs.findIndex(t => t.getAttribute('aria-selected') === 'true');
+  if (cur < 0) return;
+  e.preventDefault();
+  const next = e.key === 'ArrowRight'
+    ? (cur + 1) % tabs.length
+    : (cur - 1 + tabs.length) % tabs.length;
+  tabs[next].click();
+  tabs[next].focus();
+});
+
+// Historique : accessible depuis Tendances → Activité, retour vers Tendances.
+const trendsHistBtn = document.getElementById('trendsHistoryBtn');
+if (trendsHistBtn) trendsHistBtn.addEventListener('click', () => openHistory());
+const histBack = document.getElementById('histBackBtn');
+if (histBack) histBack.addEventListener('click', () => openTrends());
+
+// Header rétractable : se compacte quand on scrolle vers le bas, se
+// redéploie dès qu'on remonte. rAF-throttlé pour ne pas coûter au scroll.
+(function () {
+  const hdr = document.querySelector('header');
+  if (!hdr) return;
+  let lastY = 0, ticking = false;
+  window.addEventListener('scroll', () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      const y = window.scrollY;
+      if (y > 64 && y > lastY) hdr.classList.add('hdr-compact');
+      else if (y < lastY - 4 || y <= 64) hdr.classList.remove('hdr-compact');
+      lastY = y;
+      ticking = false;
+    });
+  }, { passive: true });
+})();
 
 // Stepper +/− — délégation unique sur le document parce que les inputs
 // poids/reps sont rendus dynamiquement à chaque set. data-step porte
@@ -1049,7 +812,15 @@ document.getElementById('authSubmit').addEventListener('click', async () => {
     }
     // Cache opt-out flag (art. 22) so home view can hide adjustments.
     currentUserAlgoOptOut = !!(me && me.user && me.user.algoOptOut);
+    if (me && me.user && me.user.email) currentUserEmail = me.user.email;
+    if (me && me.user) {
+      currentUser2faEnabled = !!me.user.twofaEnabled;
+      currentUserRecoveryLeft = (typeof me.user.recoveryCodesLeft === 'number')
+        ? me.user.recoveryCodesLeft : null;
+    }
+    refreshRecoveryUI();
     await bootAuthenticated();
+    try { refreshCycleUI(); } catch (_) {}
   } catch (e) {
     err.textContent = e.message;
   }
@@ -1273,12 +1044,39 @@ document.getElementById('algoOptOutBtn').addEventListener('click', async () => {
   }
 });
 
+// ensureQRCodeLib — chargement À LA DEMANDE de qrcode.js (audit modularité,
+// action 5). La librairie (12 K gzip) ne sert qu'à l'enrôlement 2FA, soit
+// ~une fois par utilisateur — la charger à chaque boot était du gâchis.
+// CSP-compatible : script same-origin injecté dynamiquement (script-src
+// 'self' l'autorise). Le SW garde /static/qrcode.js dans le shell cache,
+// donc l'enrôlement marche aussi hors-ligne.
+let _qrLibPromise = null;
+function ensureQRCodeLib() {
+  if (typeof window.qrcode === 'function') return Promise.resolve();
+  if (_qrLibPromise) return _qrLibPromise;
+  _qrLibPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = '/static/qrcode.js';
+    s.onload = () => resolve();
+    s.onerror = () => { _qrLibPromise = null; reject(new Error('qrcode.js introuvable')); };
+    document.head.appendChild(s);
+  });
+  return _qrLibPromise;
+}
+
 // renderQrInto draws an otpauth:// URL as an inline SVG QR code into the
 // given container element. Uses the vendored kazuhikoarase/qrcode-generator
-// library (window.qrcode). We use auto type number (0) and 'M' error
-// correction — that's the level Google Authenticator's docs recommend, and
-// it leaves enough room for the otpauth payload at our typical secret size.
-function renderQrInto(container, otpauthUrl) {
+// library (window.qrcode), chargée à la demande par ensureQRCodeLib(). We
+// use auto type number (0) and 'M' error correction — that's the level
+// Google Authenticator's docs recommend.
+async function renderQrInto(container, otpauthUrl) {
+  container.textContent = '…';
+  try {
+    await ensureQRCodeLib();
+  } catch (_) {
+    container.textContent = 'QR indisponible — utilise la clé manuelle.';
+    return;
+  }
   container.textContent = '';
   if (typeof window.qrcode !== 'function') {
     container.textContent = 'QR indisponible — utilise la clé manuelle.';
@@ -1382,7 +1180,13 @@ function runEnroll2FAFlow(opts) {
       errEl.textContent = '';
       newVerify.disabled = true;
       try {
-        await api('POST', '/api/2fa/verify', { code });
+        const res = await api('POST', '/api/2fa/verify', { code });
+        // Codes de récupération : affichés UNE seule fois, juste après
+        // l'enrôlement. On bloque la sortie tant que l'utilisateur n'a pas
+        // confirmé les avoir notés.
+        if (res && Array.isArray(res.recoveryCodes) && res.recoveryCodes.length) {
+          await showRecoveryCodes(res.recoveryCodes, { firstTime: true });
+        }
         resolve(true);
       } catch (e) {
         errEl.textContent = e.message || 'Code invalide. Réessaie.';
@@ -1398,6 +1202,53 @@ function runEnroll2FAFlow(opts) {
       }
     }, { once: true });
     codeEl.focus();
+  });
+}
+
+// showRecoveryCodes — modale qui affiche les codes de secours 2FA. Ils ne
+// sont JAMAIS re-montrés ensuite (le serveur ne stocke que des hash), donc
+// on insiste : copier / télécharger, et confirmation explicite « notés ».
+function showRecoveryCodes(codes, opts) {
+  opts = opts || {};
+  const list = codes.map(c => `<code class="recovery-code">${escapeHtml(c)}</code>`).join('');
+  const intro = opts.firstTime
+    ? 'Ta 2FA est active. Voici tes <strong>codes de récupération</strong> — note-les MAINTENANT.'
+    : 'Voici tes <strong>nouveaux codes de récupération</strong>. Les anciens ne fonctionnent plus.';
+  return openModal({
+    title: '🔑 Codes de récupération',
+    critical: true,
+    body: `
+      <p style="font-size:13px;line-height:1.5;margin:0 0 8px">${intro}</p>
+      <p class="mut" style="font-size:12px;line-height:1.5;margin:0 0 12px">
+        Si tu perds ton téléphone, chaque code te permet de te connecter une fois,
+        à la place du code à 6 chiffres. Garde-les hors de ton téléphone (gestionnaire
+        de mots de passe, papier dans un tiroir). On ne pourra pas te les remontrer.
+      </p>
+      <div class="recovery-grid">${list}</div>
+      <div class="row mt10">
+        <button type="button" class="sec flex1" id="recoveryCopy">📋 Copier</button>
+        <button type="button" class="sec flex1" id="recoveryDownload">⬇ Télécharger</button>
+      </div>`,
+    buttons: [{ label: 'Je les ai notés', value: true, primary: true }],
+    onRender: (root) => {
+      const text = codes.join('\n');
+      const copyBtn = root.querySelector('#recoveryCopy');
+      const dlBtn = root.querySelector('#recoveryDownload');
+      if (copyBtn) copyBtn.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(text); showToast('Codes copiés'); }
+        catch (_) { showToast('Copie impossible', { variant: 'error', message: 'Sélectionne-les à la main.' }); }
+      });
+      if (dlBtn) dlBtn.addEventListener('click', () => {
+        const blob = new Blob(
+          ['Coach Adaptatif — codes de récupération 2FA\n(chaque code est utilisable une seule fois)\n\n' + text + '\n'],
+          { type: 'text/plain' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'coach-recovery-codes.txt';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      });
+    },
   });
 }
 
@@ -1475,6 +1326,9 @@ document.getElementById('twofaBtn').addEventListener('click', async () => {
     if (!pw) return;
     try {
       await api('POST', '/api/2fa/disable', { password: pw });
+      currentUser2faEnabled = false;
+      currentUserRecoveryLeft = null;
+      refreshRecoveryUI();
       showToast('2FA désactivée', { variant: 'info', message: 'La vérification en 2 étapes est désactivée.' });
     } catch (e) { showToast('Erreur', { variant: 'error', message: e.message }); }
     return;
@@ -1483,12 +1337,155 @@ document.getElementById('twofaBtn').addEventListener('click', async () => {
   // bounces back without logging out.
   const ok = await runEnroll2FAFlow({ mandatory: false });
   if (ok) {
+    currentUser2faEnabled = true;
+    currentUserRecoveryLeft = 10; // générés à l'enrôlement
+    refreshRecoveryUI();
     showToast('2FA activée', { variant: 'success', message: 'À la prochaine connexion, on te demandera un code à 6 chiffres.' });
     show('viewHome');
   } else {
     show('viewHome');
   }
 });
+
+// Codes de récupération : régénération (exige le mot de passe). Affiche les
+// nouveaux codes une seule fois via la même modale que l'enrôlement.
+const recoveryBtn = document.getElementById('recoveryBtn');
+if (recoveryBtn) recoveryBtn.addEventListener('click', async () => {
+  const pw = await openPrompt(
+    'Régénérer les codes de récupération',
+    'Les anciens codes seront invalidés. Saisis ton mot de passe pour confirmer.',
+    { label: 'Mot de passe', type: 'password', autocomplete: 'current-password' }
+  );
+  if (!pw) return;
+  try {
+    const res = await api('POST', '/api/2fa/recovery', { password: pw });
+    if (res && Array.isArray(res.codes)) {
+      currentUserRecoveryLeft = res.codes.length;
+      await showRecoveryCodes(res.codes, { firstTime: false });
+      refreshRecoveryUI();
+    }
+  } catch (e) {
+    showToast('Erreur', { variant: 'error', message: e.message });
+  }
+});
+
+/* =================== CYCLE MENSTRUEL (opt-in) =================== */
+// Données stockées dans S.body.cycle = { enabled, periods: [ISO dates], avgLength }.
+// 100% local (comme tout le reste), extra-sensible → opt-in strict.
+function getCycleState() {
+  ensureBodyState();
+  if (!S.body.cycle) S.body.cycle = { enabled: false, periods: [] };
+  return S.body.cycle;
+}
+function refreshCycleUI() {
+  const sub = document.getElementById('cycleSub');
+  if (!sub) return;
+  const c = getCycleState();
+  if (!c.enabled) { sub.textContent = 'Adapter la charge selon ton cycle'; sub.style.color = ''; return; }
+  const ph = window.Cycle ? window.Cycle.phaseFor(c) : null;
+  sub.textContent = ph ? `Activé · phase ${ph.phase} (j${ph.day})` : 'Activé · logge tes règles';
+  sub.style.color = '';
+}
+// Sélecteur de langue (i18n). Bascule fr/en + persistance localStorage ;
+// applyI18n re-traduit le DOM tagué à chaud.
+const langBtn = document.getElementById('langBtn');
+if (langBtn) langBtn.addEventListener('click', async () => {
+  if (!window.i18n) return;
+  const cur = window.i18n.getLang();
+  const choice = await openModal({
+    title: '🌐 Langue / Language',
+    body: '<p class="mut" style="font-size:12px;margin:0 0 6px">La traduction est en cours de déploiement — certaines sections restent en français.</p>',
+    buttons: [
+      { label: 'Français', value: 'fr', primary: cur === 'fr' },
+      { label: 'English', value: 'en', primary: cur === 'en' },
+    ],
+  });
+  if (choice === 'fr' || choice === 'en') {
+    window.i18n.setLang(choice);
+    const sub = document.getElementById('langSub');
+    if (sub) sub.textContent = choice === 'en' ? 'English' : 'Français';
+  }
+});
+
+const cycleBtn = document.getElementById('cycleBtn');
+if (cycleBtn) cycleBtn.addEventListener('click', async () => {
+  const c = getCycleState();
+  const ph = (c.enabled && window.Cycle) ? window.Cycle.phaseFor(c) : null;
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const res = await openModal({
+    title: '🌙 Cycle menstruel',
+    body: `
+      <p style="font-size:13px;line-height:1.5;margin:0 0 8px">
+        Optionnel. Si tu l'actives, le coach module légèrement le volume et
+        l'intensité selon la phase de ton cycle. <strong>Ces données restent
+        sur ton appareil</strong>, comme le reste.
+      </p>
+      <p class="mut" style="font-size:11px;line-height:1.5;margin:0 0 10px">
+        La science est débattue (effet moyen faible, forte variabilité) — c'est
+        un repère, pas une règle. Tes sensations priment toujours.
+      </p>
+      ${ph ? `<div style="padding:8px 10px;background:var(--bg2);border-radius:8px;font-size:12px;margin-bottom:8px">
+        Aujourd'hui : <strong>phase ${escapeHtml(ph.phase)}</strong> (jour ${ph.day}/${ph.length}).<br>
+        <span class="mut">${escapeHtml(ph.advice)}</span>
+      </div>` : ''}`,
+    fields: [
+      { name: 'period', label: 'Date du 1er jour de tes dernières règles', type: 'date',
+        value: (c.periods && c.periods.length ? c.periods[c.periods.length - 1] : todayISO) },
+    ],
+    buttons: c.enabled
+      ? [
+          { label: 'Désactiver', value: 'off', danger: true },
+          { label: 'Enregistrer', value: 'save', primary: true },
+        ]
+      : [
+          { label: 'Annuler', value: false },
+          { label: 'Activer', value: 'save', primary: true },
+        ],
+  });
+  if (!res || res.value === false) return;
+  if (res.value === 'off') {
+    c.enabled = false;
+    queueSave(); refreshCycleUI();
+    showToast('Cycle désactivé', { variant: 'info' });
+    return;
+  }
+  // save : active + enregistre la date de règles si fournie/nouvelle.
+  c.enabled = true;
+  const d = res.fields && res.fields.period;
+  if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+    c.periods = Array.isArray(c.periods) ? c.periods : [];
+    if (!c.periods.includes(d)) c.periods.push(d);
+    // Garde au plus 24 derniers cycles, recalcule la longueur médiane.
+    c.periods = c.periods.sort().slice(-24);
+    if (window.Cycle) c.avgLength = window.Cycle.estimateCycleLength(c.periods);
+  }
+  queueSave(); refreshCycleUI();
+  showToast('Cycle activé', { variant: 'success', message: 'La charge s\'adaptera à ta phase.' });
+});
+
+// refreshRecoveryUI — affiche/masque le bouton « Codes de récupération »
+// selon que la 2FA est active, et alerte quand il reste peu de codes.
+// Alimenté par /api/me (recoveryCodesLeft) au boot, et par les actions 2FA.
+function refreshRecoveryUI() {
+  const btn = document.getElementById('recoveryBtn');
+  const sub = document.getElementById('recoverySub');
+  if (!btn) return;
+  const enabled = !!currentUser2faEnabled;
+  btn.classList.toggle('hide', !enabled);
+  if (sub) {
+    const n = currentUserRecoveryLeft;
+    if (n != null && n <= 2) {
+      sub.textContent = `⚠ Plus que ${n} code${n > 1 ? 's' : ''} — régénère-les`;
+      sub.style.color = 'var(--warn)';
+    } else if (n != null) {
+      sub.textContent = `${n} codes restants · régénérer`;
+      sub.style.color = '';
+    } else {
+      sub.textContent = 'Régénérer tes codes de secours';
+      sub.style.color = '';
+    }
+  }
+}
 
 document.getElementById('changePwBtn').addEventListener('click', async () => {
   // Single modal with all three fields — better UX than three sequential
@@ -1571,7 +1568,7 @@ window.addEventListener('pagehide', () => {
   if (savePending && currentUserEmail) {
     // Audit M-03 : sur HTTPS le cookie est nommé __Host-coach_csrf
     // (durcissement préfixe). On lit les deux noms en fallback.
-    const t = getCookie('__Host-coach_csrf') || getCookie('coach_csrf');
+    const t = csrfToken();
     const blob = new Blob([JSON.stringify({data: S})], {type:'application/json'});
     try {
       fetch('/api/data', {
@@ -3264,257 +3261,10 @@ function progressiveWeight(exoId, targetReps, mod) {
   return { weight: w, reason };
 }
 
-/* =================== GAMIFICATION ENGINE =================== */
-// XP sources: fixed 100/session + volume/10 + form bonus (reaction/tap) + streak multiplier.
-function computeXP(history) {
-  if (!history || history.length === 0) return 0;
-  let total = 0;
-  // Group by ISO date for streak bonus application per day.
-  const byDate = {};
-  for (const h of history) {
-    const d = (h.date || '').slice(0, 10);
-    (byDate[d] ||= []).push(h);
-  }
-  const dates = Object.keys(byDate).sort();
-  let streak = 0, prev = null;
-  for (const d of dates) {
-    if (prev) {
-      const diff = (new Date(d) - new Date(prev)) / 86400000;
-      streak = diff <= 3 ? streak + 1 : 1;
-    } else streak = 1;
-    prev = d;
-    const mult = streak >= 5 ? 1.5 : (streak >= 3 ? 1.2 : 1);
-    for (const h of byDate[d]) {
-      let xp = 100;
-      const vol = (h.sets || []).reduce((a, s) => a + (s.weight || 0) * (s.reps || 0), 0);
-      xp += Math.min(300, Math.round(vol / 10));
-      // form bonus: fast reaction + fast tap.
-      if (h.aggReactionMs != null && h.aggReactionMs < 450) xp += 25;
-      if (h.aggTapMs != null && h.aggTapMs < 600) xp += 25;
-      // perfect session: RPE <= 7 and no pain.
-      if (h.rpe <= 7 && (!h.pains || h.pains.length === 0)) xp += 15;
-      total += Math.round(xp * mult);
-    }
-  }
-  return total;
-}
-
-// Level curve — more xp needed per level.
-function xpForLevel(n) { return Math.round(150 * n * (n + 1) / 2); }
-function computeLevel(xp) {
-  let lv = 1;
-  while (xp >= xpForLevel(lv + 1)) lv++;
-  return lv;
-}
-function levelInfo(xp) {
-  const lv = computeLevel(xp);
-  const curBase = xpForLevel(lv);
-  const nextBase = xpForLevel(lv + 1);
-  const into = xp - curBase;
-  const span = nextBase - curBase;
-  return { level: lv, xp, into, span, pct: Math.round(100 * into / span) };
-}
-const LEVEL_NAMES = [
-  'Débutant',         // 1
-  'Apprenti',         // 2
-  'Régulier',         // 3
-  'Motivé',           // 4
-  'Déterminé',        // 5
-  'Guerrier',         // 6
-  'Athlète',          // 7
-  'Vétéran',          // 8
-  'Machine',          // 9
-  'Champion',         // 10
-  'Légende',          // 11+
-];
-function levelName(lv) {
-  return LEVEL_NAMES[Math.min(lv - 1, LEVEL_NAMES.length - 1)];
-}
-
-// Streak = consecutive DAYS (or 3-day-tolerant "semaine active") with a session.
-function computeStreak(history) {
-  if (!history || history.length === 0) return 0;
-  const dates = [...new Set(history.map(h => (h.date || '').slice(0, 10)))].sort();
-  if (dates.length === 0) return 0;
-  const lastDay = dates[dates.length - 1];
-  const today = new Date().toISOString().slice(0, 10);
-  const gap = (new Date(today) - new Date(lastDay)) / 86400000;
-  if (gap > 3) return 0;
-  let s = 1;
-  for (let i = dates.length - 1; i > 0; i--) {
-    const diff = (new Date(dates[i]) - new Date(dates[i - 1])) / 86400000;
-    if (diff <= 3) s++; else break;
-  }
-  return s;
-}
-
-// computeRollingTarget — modèle « dette de séance » plutôt que streak strict.
-// Adapté aux emplois du temps imprévisibles : on ne casse pas un compteur
-// quand la personne saute un jour, on regarde combien de séances ont été
-// faites sur une fenêtre glissante.
-//
-// history     : array S.history.
-// targetCount : objectif (ex: 6 séances).
-// windowDays  : taille de la fenêtre glissante en jours (ex: 14).
-//
-// Retourne :
-//   completed : nombre de jours distincts avec séance dans la fenêtre.
-//   target    : copie du targetCount.
-//   pct       : ratio completed/target capé à 1.
-//   status    : 'ahead' (≥100%), 'on-track' (≥ pace attendu), 'behind' sinon.
-//   pace      : completed attendus à ce stade de la fenêtre (utile pour UI).
-//
-// La pace attendue est target * (windowDays/windowDays) = target en fin de
-// fenêtre. À mi-fenêtre on attend 50%. On compare completed à pace.
-function computeRollingTarget(history, targetCount, windowDays) {
-  targetCount = Math.max(1, targetCount || 1);
-  windowDays = Math.max(1, windowDays || 14);
-  const today = new Date();
-  today.setHours(23, 59, 59, 999);
-  const cutoff = new Date(today.getTime() - (windowDays - 1) * 86400000);
-  cutoff.setHours(0, 0, 0, 0);
-  const seen = new Set();
-  for (const h of (history || [])) {
-    const t = Date.parse(h.date || '');
-    if (Number.isNaN(t)) continue;
-    if (t < cutoff.getTime() || t > today.getTime()) continue;
-    seen.add((h.date || '').slice(0, 10));
-  }
-  const completed = seen.size;
-  // Pace attendu = même taux constant sur la fenêtre. Pour 14j et 6 cibles,
-  // pace = 6 partout en fin de fenêtre. L'utilisateur compare "X aujourd'hui
-  // vs Y attendus" — pas de pénalité si la fenêtre n'est pas finie.
-  const pace = targetCount;
-  const pct = Math.min(1, completed / targetCount);
-  let status;
-  if (completed >= targetCount) status = 'ahead';
-  else if (completed >= targetCount * 0.5) status = 'on-track';
-  else status = 'behind';
-  return { completed, target: targetCount, pct, status, pace, windowDays };
-}
-
-// rollingWindowConfig — dérive la cible et la fenêtre depuis le profil.
-// freq=3 → cible=6 sur 14j (un cycle de 2 semaines). On expose la fonction
-// pour qu'une future option utilisateur puisse y brancher des valeurs perso.
-function rollingWindowConfig(profile) {
-  const freq = (profile && +profile.freq) || 3;
-  return {
-    targetCount: freq * 2,   // 2 semaines à la fréquence cible
-    windowDays: 14,
-  };
-}
-
-// Count of PRs across all exercises.
-function countPRs(history) {
-  const best = {};
-  let prs = 0;
-  for (const h of history) {
-    if (h && (h.kind === 'snack' || h.kind === 'external')) continue;
-    for (const s of (h.sets || [])) {
-      if (!s.exoId) continue;
-      const key = s.exoId;
-      const e = EX_BY_ID[key];
-      if (!e) continue;
-      const score = e.timed ? (s.heldSecs ?? s.reps ?? 0) : (s.weight || 0) * (s.reps || 0);
-      if (best[key] == null) { best[key] = score; continue; }
-      if (score > best[key]) { prs++; best[key] = score; }
-    }
-  }
-  return prs;
-}
-
-// Achievement catalog. Each `check(S)` returns true once earned.
-function computeAchievements() {
-  const h = S.history || [];
-  const total = h.length;
-  const minReact = h.map(x => x.aggReactionMs).filter(x => x != null).reduce((m, v) => Math.min(m, v), 9999);
-  const streak = computeStreak(h);
-  const prs = countPRs(h);
-  return [
-    { id: 'first',    icon: '🔥', title: 'Première',   sub: 'Séance 1',    earned: total >= 1 },
-    { id: 's5',       icon: '💪', title: '5 séances',  sub: 'On est sérieux', earned: total >= 5 },
-    { id: 's10',      icon: '🏋️', title: '10 séances', sub: 'Régulier',    earned: total >= 10 },
-    { id: 's25',      icon: '⭐', title: '25 séances', sub: 'Machine',     earned: total >= 25 },
-    { id: 'pr1',      icon: '🏆', title: 'Premier PR', sub: 'Record battu', earned: prs >= 1 },
-    { id: 'pr5',      icon: '👑', title: '5 PRs',      sub: 'En pleine progression', earned: prs >= 5 },
-    { id: 'react',    icon: '⚡', title: 'Réflexe',    sub: '< 300ms',     earned: minReact < 300 },
-    { id: 'streak3',  icon: '🎯', title: 'Streak 3',   sub: '3 séances d\'affilée', earned: streak >= 3 },
-    { id: 'streak7',  icon: '🚀', title: 'Streak 7',   sub: '7 séances d\'affilée', earned: streak >= 7 },
-  ];
-}
-
-/* =================== MASCOT (inline SVG, scales with level) =================== */
-// 5 visual stages based on level bucket. Colors from Telix palette.
-function mascotStage(level) {
-  if (level >= 10) return 4;
-  if (level >= 7)  return 3;
-  if (level >= 4)  return 2;
-  if (level >= 2)  return 1;
-  return 0;
-}
-function renderMascot(level) {
-  const stage = mascotStage(level);
-  // torso width, arm thickness, bicep bulge — grow with stage.
-  const torso = 38 + stage * 6;       // 38..62
-  const armW  = 10 + stage * 3;       // 10..22
-  const bicep = 6 + stage * 2.5;      // 6..16
-  const neck  = 12 + stage;           // 12..16
-  const eyebrows = stage >= 2;
-  // Progression neutre → bleu → ambre (récompense au niveau max).
-  const hue = ['#c8cde0','#7a8098','#4a6bb0','#26408b','#e8954d'][stage];
-  const skin = '#ffd7a8';
-  const shadow = 'rgba(0,0,0,0.2)';
-  return `<svg viewBox="0 0 140 180" width="140" height="180" xmlns="http://www.w3.org/2000/svg">
-    <!-- shadow -->
-    <ellipse cx="70" cy="170" rx="36" ry="4" fill="${shadow}"/>
-    <!-- legs -->
-    <rect x="${70-16}" y="125" width="13" height="40" rx="6" fill="${hue}"/>
-    <rect x="${70+3}"  y="125" width="13" height="40" rx="6" fill="${hue}"/>
-    <!-- torso -->
-    <path d="M ${70-torso/2} 75
-             Q 70 ${65 - stage*2} ${70+torso/2} 75
-             L ${70+torso/2-6} 130
-             Q 70 135 ${70-torso/2+6} 130 Z"
-          fill="${hue}"/>
-    <!-- chest line -->
-    <path d="M ${70-torso/2+8} 92 Q 70 ${92+stage} ${70+torso/2-8} 92"
-          stroke="rgba(0,0,0,0.18)" stroke-width="1.5" fill="none"/>
-    <!-- abs -->
-    ${stage >= 2 ? `<line x1="70" y1="98" x2="70" y2="126" stroke="rgba(0,0,0,0.22)" stroke-width="1.3"/>
-    <line x1="${70-10}" y1="108" x2="${70+10}" y2="108" stroke="rgba(0,0,0,0.22)" stroke-width="1.3"/>
-    <line x1="${70-10}" y1="118" x2="${70+10}" y2="118" stroke="rgba(0,0,0,0.22)" stroke-width="1.3"/>` : ''}
-    <!-- arms (L) -->
-    <path d="M ${70-torso/2+2} 78
-             Q ${70-torso/2-bicep} 95 ${70-torso/2-2} 115
-             L ${70-torso/2+armW-2} 115
-             Q ${70-torso/2+armW-bicep} 95 ${70-torso/2+armW+2} 78 Z"
-          fill="${skin}"/>
-    <!-- arms (R) -->
-    <path d="M ${70+torso/2-2} 78
-             Q ${70+torso/2+bicep} 95 ${70+torso/2+2} 115
-             L ${70+torso/2-armW+2} 115
-             Q ${70+torso/2-armW+bicep} 95 ${70+torso/2-armW-2} 78 Z"
-          fill="${skin}"/>
-    <!-- neck -->
-    <rect x="${70-neck/2}" y="58" width="${neck}" height="14" fill="${skin}"/>
-    <!-- head -->
-    <circle cx="70" cy="45" r="20" fill="${skin}"/>
-    <!-- hair -->
-    <path d="M 52 38 Q 70 22 88 38 Q 86 30 70 28 Q 54 30 52 38 Z" fill="#1d1b17"/>
-    <!-- eyes -->
-    <circle cx="63" cy="46" r="2" fill="#1d1b17"/>
-    <circle cx="77" cy="46" r="2" fill="#1d1b17"/>
-    ${eyebrows ? `<path d="M 58 42 L 67 40" stroke="#1d1b17" stroke-width="1.8" stroke-linecap="round"/>
-    <path d="M 73 40 L 82 42" stroke="#1d1b17" stroke-width="1.8" stroke-linecap="round"/>` : ''}
-    <!-- mouth -->
-    ${stage >= 3
-      ? `<path d="M 62 54 Q 70 60 78 54" stroke="#1d1b17" stroke-width="2" fill="none" stroke-linecap="round"/>`
-      : `<path d="M 64 54 Q 70 57 76 54" stroke="#1d1b17" stroke-width="1.8" fill="none" stroke-linecap="round"/>`}
-    ${stage === 4 ? `<!-- champion cape/star -->
-      <text x="100" y="30" font-size="18">⭐</text>
-      <text x="30" y="30" font-size="18">⭐</text>` : ''}
-  </svg>`;
-}
+/* =================== GAMIFICATION ENGINE ===================
+ * Deplace dans gamification.js (audit modularite, action 6).
+ * computeXP, levelInfo, computeStreak, countPRs, renderMascot...
+ * y sont definis et partages via la portee globale. */
 
 /* =================== SWAP MODAL =================== */
 let swapCtx = null; // { exoIdx }
@@ -3921,25 +3671,64 @@ function paintHomeSkeleton() {
     <div class="skel" style="width:90px;height:62px;border-radius:12px"></div>`;
 }
 
-function openHome() {
-  if (!S.profile) { openOnboarding(); return; }
-  show('viewHome');
-  // Reset du "Afficher quand même" pour que la bannière de séance
-  // d'aujourd'hui faite revienne à chaque retour sur la home.
-  const _nsc = document.getElementById('nextSessionCard');
-  if (_nsc) delete _nsc.dataset.showNextAnyway;
+/* Refonte mobile — l'accueil ne rend plus que ce qui répond à « qu'est-ce
+ * que je fais maintenant ? ». La gamification (hero XP, qstats, badges) et
+ * les cartes d'analyse vivent dans Tendances (openTrends), les ajustements
+ * dans Coach (openCoach). */
 
-  // 1) Hero ring — mascot pastille + niveau au centre + XP en bas. La
-  // progression utilise stroke-dashoffset sur le SVG circle. Circumference
-  // pour r=86 → 2·π·86 ≈ 540.35. dashoffset=0 = anneau plein,
-  // dashoffset=540.35 = anneau vide.
+// renderGreeting — date du jour + salut + mini-anneau readiness.
+function renderGreeting() {
+  const dateEl = document.getElementById('greetDate');
+  const nameEl = document.getElementById('greetName');
+  if (dateEl) {
+    dateEl.textContent = new Date().toLocaleDateString('fr-FR',
+      { weekday: 'long', day: 'numeric', month: 'long' });
+  }
+  if (nameEl) {
+    // Prénom approximé depuis l'email (avant @, avant . ou chiffre) — on n'a
+    // volontairement pas de champ "nom" (minimisation des données, RGPD).
+    let who = '';
+    if (currentUserEmail) {
+      const local = currentUserEmail.split('@')[0].split(/[._\d]/)[0];
+      if (local) who = ' ' + local.charAt(0).toUpperCase() + local.slice(1);
+    }
+    nameEl.textContent = 'Salut' + who + ' 👋';
+  }
+  // Mini-anneau readiness (Banister composite). Circumference r=24 → 150.8.
+  const bar = document.getElementById('readyRingBar');
+  const val = document.getElementById('readyRingVal');
+  if (bar && val && window.Banister) {
+    ensureBodyState();
+    const r = window.Banister.readiness(S.history, S.body.physio, S.formScore);
+    const score = Math.round(r.score);
+    val.textContent = score;
+    const C = 150.8;
+    bar.setAttribute('stroke-dashoffset', (C * (1 - score / 100)).toFixed(1));
+    bar.setAttribute('stroke', score >= 65 ? 'var(--success)'
+                            : score >= 40 ? 'var(--warn)'
+                            : 'var(--danger)');
+    // a11y (4.1.2) : le nom accessible du bouton porte le SCORE, pas juste
+    // une description générique — un lecteur d'écran annonce la valeur.
+    const ring = document.getElementById('readyRing');
+    if (ring) ring.setAttribute('aria-label',
+      `Readiness du jour : ${score} sur 100. Toucher pour le détail.`);
+  }
+}
+
+// renderGamification — hero ring XP + quick stats + badges (onglet Tendances).
+function renderGamification() {
   const xp = computeXP(S.history);
   const info = levelInfo(xp);
-  document.getElementById('mascotBox').innerHTML = renderMascot(info.level);
-  document.getElementById('heroLevel').textContent = info.level;
-  document.getElementById('heroLevelName').textContent = levelName(info.level);
-  document.getElementById('heroXpText').textContent = `${info.into} / ${info.span} XP`;
-  document.getElementById('heroNextText').textContent = `→ Niv. ${info.level + 1}`;
+  const mascot = document.getElementById('mascotBox');
+  if (mascot) mascot.innerHTML = renderMascot(info.level);
+  const lv = document.getElementById('heroLevel');
+  if (lv) lv.textContent = info.level;
+  const ln = document.getElementById('heroLevelName');
+  if (ln) ln.textContent = levelName(info.level);
+  const xt = document.getElementById('heroXpText');
+  if (xt) xt.textContent = `${info.into} / ${info.span} XP`;
+  const nt = document.getElementById('heroNextText');
+  if (nt) nt.textContent = `→ Niv. ${info.level + 1}`;
   const ring = document.getElementById('heroRingProgress');
   if (ring) {
     const circumference = 2 * Math.PI * 86; // ≈ 540.35
@@ -3947,11 +3736,6 @@ function openHome() {
     const offset = circumference * (1 - pct / 100);
     ring.setAttribute('stroke-dashoffset', offset.toFixed(2));
   }
-
-  // 2) Quick stats.
-  // Cible roulante (modèle « dette de séance ») à la place du streak strict :
-  // tolère mieux les semaines chaotiques et donne une vision d'ensemble
-  // sur 14 jours plutôt que jour-par-jour.
   const cfg = rollingWindowConfig(S.profile);
   const pace = computeRollingTarget(S.history, cfg.targetCount, cfg.windowDays);
   const paceEl = document.getElementById('qPace');
@@ -3968,12 +3752,47 @@ function openHome() {
        : pace.status === 'behind' ? ' — un peu en retard, mais une seule séance peut tout changer.'
        : ' — pile dans le rythme.');
   }
-  document.getElementById('qSessions').textContent = S.history.length;
-  document.getElementById('qForme').textContent = Math.round(S.formScore);
-  document.getElementById('qPRs').textContent = countPRs(S.history);
-
-  // 3) Badges + science card (Hooper / lifestyle / HRV / asymétries / etc.)
+  const qs = document.getElementById('qSessions');
+  if (qs) qs.textContent = S.history.length;
+  const qf = document.getElementById('qForme');
+  if (qf) qf.textContent = Math.round(S.formScore);
+  const qp = document.getElementById('qPRs');
+  if (qp) qp.textContent = countPRs(S.history);
   renderBadges();
+}
+
+// openTrends — onglet analyse : Charge / Force / Activité.
+function openTrends() {
+  if (!S.profile) { openOnboarding(); return; }
+  show('viewTrends');
+  renderGamification();
+  renderWeeklyVolume();
+  renderCalendarHeatmap();
+  renderBanisterCard();
+  renderProgrammingCard();
+  renderMiniCharts();
+}
+
+// openCoach — onglet conseils : ajustements générés + guide.
+function openCoach() {
+  if (!S.profile) { openOnboarding(); return; }
+  show('viewCoach');
+  renderAdjustments();
+}
+
+function openHome() {
+  if (!S.profile) { openOnboarding(); return; }
+  show('viewHome');
+  // Reset du "Afficher quand même" pour que la bannière de séance
+  // d'aujourd'hui faite revienne à chaque retour sur la home.
+  const _nsc = document.getElementById('nextSessionCard');
+  if (_nsc) delete _nsc.dataset.showNextAnyway;
+
+  // 1) Greeting + mini-anneau readiness.
+  renderGreeting();
+
+  // 2) Science card (Hooper / lifestyle / HRV / asymétries) — repliée par
+  // défaut, dépliée via le head ou le mini-anneau readiness.
   try { renderScienceCard(); } catch (e) { console.warn('renderScienceCard:', e); }
 
   // 4) Next session (with swap buttons).
@@ -4018,24 +3837,13 @@ function openHome() {
   //     haven't already collected feedback for today.
   renderSorenessCheck();
 
-  // 5) Weekly volume per muscle group (sets/week, hypertrophy view).
-  renderWeeklyVolume();
-
-  // 5b) Calendar heatmap — 16 weeks of consistency.
-  renderCalendarHeatmap();
-
-  // 5c) Auto-deload check — if RPE trend keeps rising, flag it.
+  // 5) Alertes contextuelles (deload / plateau / séance en pause) — elles
+  // s'ancrent sur #nextSessionBox, donc elles restent sur l'accueil. Les
+  // cartes d'analyse (volume, heatmap, Banister, programmation, mini charts,
+  // ajustements) sont rendues par openTrends() / openCoach().
   renderDeloadHint();
   renderPlateauHint();
   renderPausedSessionHint();
-  renderBanisterCard();
-  renderProgrammingCard();
-
-  // 6) Mini charts.
-  renderMiniCharts();
-
-  // 7) Recent adjustments.
-  renderAdjustments();
 }
 
 // shouldDeload — flags overreach when the trailing form trend has dropped
@@ -4255,7 +4063,176 @@ function renderBanisterCard() {
       <strong>${escapeHtml(reco.label)}.</strong>
       ${escapeHtml(reco.advice)}
     </div>
-    ${readinessHtml}`;
+    ${readinessHtml}
+    ${renderLoadRiskBlock(reco)}`;
+}
+
+/* =================== MODEL CACHE (audit modularité, action 2) ===================
+ * Les états Kalman des key lifts étaient recalculés par CHAQUE renderer
+ * (deload advisor, forecasts, mini-stats) à CHAQUE rendu — O(obs × histoire)
+ * par exo, fois 6 exos, fois 2-3 renderers. Sur mobile avec 2-3 ans
+ * d'historique, on frôlait la frame perceptible en travaillant en double.
+ *
+ * Même recette que Banister.getCalibration : mémoïsation sur la clé
+ * (longueur de l'historique, date du dernier item) — un historique
+ * append-only change l'une des deux à chaque séance, donc l'invalidation
+ * est exacte et gratuite. */
+const ModelCache = (() => {
+  let key = null;
+  let states = {};
+  function histKey() {
+    const h = S.history || [];
+    return h.length + '|' + (h.length ? (h[h.length - 1].date || '') : '');
+  }
+  // kalmanState — wrapper mémoïsé de Bayesian.computeState(S.history, …).
+  function kalmanState(exoId, opts) {
+    if (!window.Bayesian) return null;
+    const k = histKey();
+    if (key !== k) { key = k; states = {}; }
+    const ck = exoId + '|' + ((opts && opts.halfLifeDays) || '');
+    if (!(ck in states)) {
+      states[ck] = window.Bayesian.computeState(S.history, exoId, opts || {});
+    }
+    return states[ck];
+  }
+  return { kalmanState };
+})();
+
+/* =================== CHARGE & RISQUE (Foster / Gabbett / tapering) ===================
+ * Bloc complémentaire de la carte Banister :
+ *   - monotonie & strain (Foster 1998 — même papier que le session-RPE)
+ *   - ACWR (Gabbett 2016, présenté avec son caveat — Impellizzeri 2020)
+ *   - fenêtre de test 1RM projetée (tapering Banister)
+ *   - verdict deload fusionné (Science.deloadAdvisor) qui croise TSB,
+ *     dérive Kalman, Hooper, monotonie et ACWR
+ *   - mention de la calibration τ personnalisée quand elle est active
+ * Respecte l'opt-out art. 22 : les RECOMMANDATIONS (deload, fenêtre de
+ * test) sont masquées si l'utilisateur a refusé les décisions
+ * algorithmiques ; les métriques descriptives restent affichées.
+ */
+function renderLoadRiskBlock(reco) {
+  const B = window.Banister;
+  if (!B || typeof B.monotony !== 'function') return '';
+  const mono = B.monotony(S.history);
+  const ac = typeof B.acwr === 'function' ? B.acwr(S.history) : null;
+  if (!mono && !ac) return '';
+
+  const rows = [];
+  if (mono) {
+    const mColor = mono.level === 'high' ? 'var(--danger,#FF6B6B)'
+                 : mono.level === 'moderate' ? 'var(--warn,#F2C457)'
+                 : 'var(--success,#5DD4A4)';
+    rows.push(`<div style="display:flex;justify-content:space-between;gap:8px">
+      <span>Monotonie <span class="mut" style="font-size:10px">(Foster 1998)</span></span>
+      <strong style="color:${mColor}">${mono.monotony}</strong>
+    </div>
+    <div style="display:flex;justify-content:space-between;gap:8px">
+      <span>Strain hebdo</span><strong>${mono.strain}</strong>
+    </div>`);
+    if (mono.level !== 'ok') {
+      rows.push(`<div class="mut" style="font-size:11px;line-height:1.4">${escapeHtml(mono.advice)}</div>`);
+    }
+  }
+  if (ac) {
+    const aColor = ac.zone === 'danger' ? 'var(--danger,#FF6B6B)'
+                 : ac.zone === 'caution' ? 'var(--warn,#F2C457)'
+                 : ac.zone === 'optimal' ? 'var(--success,#5DD4A4)'
+                 : 'var(--mut)';
+    rows.push(`<div style="display:flex;justify-content:space-between;gap:8px;margin-top:4px">
+      <span>ACWR <span class="mut" style="font-size:10px">(Gabbett 2016)</span></span>
+      <strong style="color:${aColor}">${ac.ratio}</strong>
+    </div>`);
+    if (ac.zone !== 'optimal') {
+      rows.push(`<div class="mut" style="font-size:11px;line-height:1.4">${escapeHtml(ac.advice)}</div>`);
+    }
+    rows.push(`<div class="mut" style="font-size:10px;line-height:1.3;opacity:.8">${escapeHtml(ac.caveat)}</div>`);
+  }
+
+  // Calibration τ personnalisée — transparence sur la science qui tourne.
+  const calib = typeof B.getCalibration === 'function' ? B.getCalibration(S.history) : null;
+  const calibHtml = (calib && calib.calibrated)
+    ? `<div class="mut" style="font-size:10px;margin-top:4px">
+         Constantes Banister calibrées sur TES données : τ ${calib.tauFitness}/${calib.tauFatigue}j
+         (corrélation ${calib.r} vs ${calib.rDefault} en standard, n=${calib.n}).
+       </div>`
+    : '';
+
+  // Recommandations algorithmiques — masquées si opt-out art. 22.
+  let advisorHtml = '';
+  let windowHtml = '';
+  if (!currentUserAlgoOptOut) {
+    // Verdict deload fusionné : croise les signaux déjà calculés.
+    if (window.Science && typeof window.Science.deloadAdvisor === 'function' && window.Bayesian) {
+      const drifts = [];
+      try {
+        const keyLifts = window.Programming && typeof window.Programming.pickKeyLifts === 'function'
+          ? window.Programming.pickKeyLifts(S.history, 6, {})
+          : [];
+        for (const exoId of keyLifts) {
+          const st = ModelCache.kalmanState(exoId, {});
+          if (!st) continue;
+          const d = window.Bayesian.detectDrift(st);
+          if (d.drifting) {
+            const lib = (window.EX_BY_ID || {})[exoId];
+            drifts.push({ name: (lib && lib.n) || exoId, severity: d.severity });
+          }
+        }
+      } catch (_) { /* best-effort */ }
+      let hooperLevel = null;
+      try {
+        const hs = (S.body && Array.isArray(S.body.hooper)) ? S.body.hooper : [];
+        const last = hs.length ? hs[hs.length - 1] : null;
+        if (last && window.Science.hooperReadiness) {
+          const hr = window.Science.hooperReadiness(last);
+          hooperLevel = hr && hr.level;
+        }
+      } catch (_) {}
+      let autonomicLevel = null;
+      try {
+        if (window.Science.autonomicOverreaching && S.body && Array.isArray(S.body.physio)) {
+          autonomicLevel = (window.Science.autonomicOverreaching(S.body.physio) || {}).level;
+        }
+      } catch (_) {}
+      const verdict = window.Science.deloadAdvisor({
+        tsbLevel: reco.level,
+        drifts,
+        hooperLevel,
+        monotonyLevel: mono && mono.level,
+        acwrZone: ac && ac.zone,
+        autonomicLevel,
+      });
+      if (verdict.level !== 'none') {
+        const vColor = verdict.recommend ? 'var(--danger,#FF6B6B)' : 'var(--warn,#F2C457)';
+        advisorHtml = `<div style="margin-top:8px;padding:8px 10px;border-left:3px solid ${vColor};
+                          background:var(--bg2);border-radius:4px;font-size:12px;line-height:1.5">
+          <strong>${verdict.recommend ? '🛑 Deload recommandé' : '⚠️ Deload à considérer'}</strong>
+          — ${escapeHtml(verdict.advice)}
+          <ul style="margin:6px 0 0;padding-left:16px">
+            ${verdict.reasons.map(r =>
+              `<li><strong>${escapeHtml(r.source)}</strong> : ${escapeHtml(r.detail)}</li>`).join('')}
+          </ul>
+        </div>`;
+      }
+    }
+    // Fenêtre de test 1RM — pertinente seulement quand on n'est pas déjà frais.
+    if (typeof B.bestTestWindow === 'function' && reco.level !== 'peak' && reco.level !== 'fresh') {
+      const win = B.bestTestWindow(S.history, 14);
+      if (win && win.advice) {
+        windowHtml = `<div class="mut" style="font-size:11px;margin-top:6px;line-height:1.4">
+          🎯 ${escapeHtml(win.advice)}
+        </div>`;
+      }
+    }
+  }
+
+  return `<div style="margin:10px 0 0;padding:8px 10px;background:var(--bg2);border-radius:6px;font-size:12px">
+    <div class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">
+      Charge & risque
+    </div>
+    ${rows.join('')}
+    ${calibHtml}
+    ${windowHtml}
+  </div>${advisorHtml}`;
 }
 
 /* =================== CARTE PROGRAMMATION (niveau 2) ===================
@@ -4425,8 +4402,9 @@ function renderBayesianForecasts() {
     : (window.Programming.KEY_LIFTS || []);
   const cards = [];
   const drifts = [];
+  const plateaus = [];
   for (const exoId of keyLifts) {
-    const state = window.Bayesian.computeState(S.history, exoId, { halfLifeDays: halfLife });
+    const state = ModelCache.kalmanState(exoId, { halfLifeDays: halfLife });
     if (!state || state.n < 4) continue;          // pas assez de données
     const traj = window.Bayesian.forecastTrajectory(state, 90, 7, 0.9);
     if (traj.length < 2) continue;
@@ -4437,6 +4415,11 @@ function renderBayesianForecasts() {
     const drift = window.Bayesian.detectDrift(state);
     if (drift.drifting) {
       drifts.push({ name, exoId, drift });
+    } else if (typeof window.Bayesian.detectPlateau === 'function') {
+      // Plateau confiant (pente ~nulle, incertitude faible, ≥4 sem) —
+      // mutuellement exclusif avec la dérive : on ne flag pas les deux.
+      const plat = window.Bayesian.detectPlateau(state);
+      if (plat.plateau) plateaus.push({ name, exoId, plat });
     }
   }
   if (cards.length === 0) return '';
@@ -4452,12 +4435,25 @@ function renderBayesianForecasts() {
       ).join('')}
       <p class="mut" style="font-size:12px;margin:6px 0 0">${escapeHtml(drifts[0].drift.advice)}</p>
     </div>`;
+  // Plateaux confiants — suggestion de variation (masquée si opt-out art. 22,
+  // c'est une recommandation algorithmique).
+  const plateauHtml = (plateaus.length === 0 || currentUserAlgoOptOut) ? '' : `
+    <div style="margin:10px 0;padding:10px 12px;border-left:3px solid var(--blue,#7BA1FF);
+                background:var(--bg2);border-radius:6px;font-size:13px;line-height:1.5">
+      <strong>📊 Plateau confirmé</strong> sur ${plateaus.length} exo${plateaus.length > 1 ? 's' : ''} :
+      ${plateaus.map(p =>
+        `<span class="pill" style="margin-right:6px">${escapeHtml(p.name)} ` +
+        `(${p.plat.weeks} sem)</span>`
+      ).join('')}
+      <p class="mut" style="font-size:12px;margin:6px 0 0">${escapeHtml(plateaus[0].plat.advice)}</p>
+    </div>`;
   return `
     <div style="font-size:12px;color:var(--mut);border-top:1px solid var(--line);
                 padding-top:10px;margin-bottom:4px;margin-top:10px">
       TRAJECTOIRES PRÉVUES (90 JOURS)
     </div>
     ${driftHtml}
+    ${plateauHtml}
     ${cards.join('')}
     <p class="mut" style="font-size:11px;margin:4px 0 0;line-height:1.4">
       Filtre de Kalman 2D par exo, robuste aux outliers (M-estimateur Huber).
@@ -4764,8 +4760,23 @@ function renderScienceCard() {
   const today = new Date().toISOString().slice(0, 10);
 
   // --- 1. Détection désentraînement -------------------------------------
+  // Courbe personnalisée (Mujika & Padilla) : on passe l'ancienneté
+  // d'entraînement (span de l'historique) et le CTL courant pour moduler
+  // la perte projetée — un athlète entraîné retient mieux qu'un novice.
   const gap = S2.lastTrainingGapDays(S.history);
-  const detrain = gap != null ? S2.detrainingProjection(gap) : null;
+  let detrainOpts;
+  try {
+    const hist = S.history || [];
+    if (hist.length > 1) {
+      const ts = hist.map(h => Date.parse(h.date || '')).filter(isFinite);
+      const spanWeeks = ts.length > 1
+        ? (Math.max.apply(null, ts) - Math.min.apply(null, ts)) / (7 * 86400000)
+        : 0;
+      const ctl = window.Banister ? window.Banister.computeAll(hist).ctl : null;
+      detrainOpts = { trainingAgeWeeks: spanWeeks, ctl };
+    }
+  } catch (_) { /* fallback courbe standard */ }
+  const detrain = gap != null ? S2.detrainingProjection(gap, detrainOpts) : null;
 
   // --- 2. Readiness composite (HRV Plews + Hooper) ----------------------
   const hrv = S.body.physio && S.body.physio.length > 0
@@ -5780,7 +5791,7 @@ function renderNext() {
     let best = null, bestLow = null, bestHigh = null, bestBayes = false;
     if (sw) {
       if (window.Bayesian && S.history.length >= 4) {
-        const st = window.Bayesian.computeState(S.history, e.id, { halfLifeDays: keyLiftHalfLifeFor() });
+        const st = ModelCache.kalmanState(e.id, { halfLifeDays: keyLiftHalfLifeFor() });
         if (st && st.n >= 3) {
           const ci = window.Bayesian.current1RM(st, 0.9);
           best = Math.round(ci.mu * 2) / 2;
@@ -6291,6 +6302,18 @@ async function openExternalActivityLog() {
     sets: [],     // vide pour ne pas compter dans countPRs/volume
     rpe: null,
   };
+  // Charge cardio réelle : si on a des données physio le MÊME jour (import
+  // Strava / wearable), on attache kcal + FC moyenne à l'activité. Banister
+  // sessionLoad les utilisera (TRIMP / kcal) au lieu du sRPE approximé.
+  try {
+    ensureBodyState();
+    const day = dateISO.slice(0, 10);
+    const phys = (S.body.physio || []).find(p => p && p.date === day);
+    if (phys) {
+      if (phys.activeEnergy > 0) entry.kcal = phys.activeEnergy;
+      if (phys.avgHR > 0) entry.avgHR = phys.avgHR;
+    }
+  } catch (_) { /* enrichissement best-effort */ }
   S.history = Array.isArray(S.history) ? S.history.concat([entry]) : [entry];
   queueSave();
   showToast('Activité enregistrée', {
@@ -6477,7 +6500,8 @@ function openExerciseDetail(exoId, returnFn) {
   activateYouTubePlaceholder();
 }
 
-document.getElementById('guideBackBtn').addEventListener('click', () => openHome());
+// Le guide s'ouvre depuis l'onglet Coach (refonte mobile) — le retour y revient.
+document.getElementById('guideBackBtn').addEventListener('click', () => openCoach());
 document.getElementById('exoBackBtn').addEventListener('click', () => {
   const fn = exoDetailReturn || openHome;
   exoDetailReturn = null;
@@ -6636,18 +6660,18 @@ function renderSession() {
     card.querySelector('#focusGo').addEventListener('click', () => logSet(t.exoIdx, t.setIdx));
   }
 
-  // Compact progress across all exos.
+  // Progression compacte (refonte mobile) : bandeau horizontal scrollable
+  // de chips au lieu d'une carte verticale — le bouton valider reste en
+  // zone pouce sans scroller, et l'état des autres exos reste visible
+  // d'un coup d'œil.
   const prog = document.createElement('div');
-  prog.className = 'card';
-  prog.innerHTML = `<h2>Progression</h2>` + s.exos.map((e, i) => {
+  prog.className = 'prog-strip';
+  prog.setAttribute('aria-label', 'Progression des exercices');
+  prog.innerHTML = s.exos.map((e, i) => {
     const logged = live.sets.filter(x => x.exoIdx === i).length;
-    const pct = Math.round(logged * 100 / e.sets);
     const cls = logged === e.sets ? 'done' : (t && i === t.exoIdx ? 'current' : '');
-    return `<div class="prog-row ${cls}">
-      <div class="prog-name">${escapeHtml(e.name)}</div>
-      <div class="prog-count">${logged}/${e.sets}</div>
-      <div class="prog-bar"><i style="width:${pct}%"></i></div>
-    </div>`;
+    const icon = logged === e.sets ? '✓' : (t && i === t.exoIdx ? '▸' : '');
+    return `<span class="prog-chip ${cls}">${icon ? icon + ' ' : ''}${escapeHtml(e.name)} <b>${logged}/${e.sets}</b></span>`;
   }).join('');
   body.appendChild(prog);
 
@@ -8408,9 +8432,7 @@ document.getElementById('resetOnbBtn').addEventListener('click', async () => {
   openOnboarding();
 });
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
+// escapeHtml : voir core.js.
 
 /* =================== BOOT =================== */
 function setHeaderSub(txt) { document.getElementById('hdrSub').textContent = txt; }
@@ -8544,6 +8566,11 @@ async function boot() {
   show('viewAuth');
   setAuthMode('login');
 }
+
+// i18n : applique les traductions sur le DOM tagué [data-i18n] avant le boot
+// applicatif. Les nœuds non tagués gardent leur texte français en dur
+// (migration incrémentale, zéro régression).
+try { if (window.i18n) { window.i18n.applyI18n(document); document.documentElement.setAttribute('lang', window.i18n.getLang()); } } catch (_) {}
 
 boot();
 

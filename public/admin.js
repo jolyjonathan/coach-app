@@ -14,16 +14,13 @@
 'use strict';
 
 /* =================== API =================== */
-function getCookie(name) {
-  const m = document.cookie.match('(^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)');
-  return m ? decodeURIComponent(m[2]) : null;
-}
+// getCookie / csrfToken / escapeHtml viennent de core.js (chargé par admin.html).
 async function api(method, path, body) {
   const headers = { 'Accept': 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (method !== 'GET' && method !== 'HEAD') {
     // Audit M-03 : préfère __Host- sur HTTPS.
-    const t = getCookie('__Host-coach_csrf') || getCookie('coach_csrf');
+    const t = csrfToken();
     if (t) headers['X-CSRF-Token'] = t;
   }
   const res = await fetch(path, {
@@ -42,9 +39,8 @@ async function api(method, path, body) {
 async function refreshCSRF() { try { await api('GET', '/api/csrf'); } catch (_) {} }
 
 /* =================== HELPERS =================== */
-function esc(s) {
-  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
+// esc — alias historique vers l'implémentation canonique de core.js.
+function esc(s) { return escapeHtml(s == null ? '' : s); }
 // num coerces a user-controlled value to a finite number, defaulting to 0.
 // Defense-in-depth for the admin view: a regular user saves their own JSON
 // (via PUT /api/data), and the server only whitelists top-level keys — it

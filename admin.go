@@ -68,14 +68,14 @@ func requireAdmin(h http.HandlerFunc) http.HandlerFunc {
 // adminUserView is the only shape we serialize for user records to admins.
 // The password hash and any future sensitive field must never leak here.
 type adminUserView struct {
-	ID         string    `json:"id"`
-	Email      string    `json:"email"`
-	CreatedAt  time.Time `json:"createdAt"`
-	IsAdmin    bool      `json:"isAdmin"`
-	IsSelf     bool      `json:"isSelf"`
-	HasData    bool      `json:"hasData"`
-	LastSeen   time.Time `json:"lastSeen,omitempty"`
-	Sessions   int       `json:"activeSessions"`
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"createdAt"`
+	IsAdmin   bool      `json:"isAdmin"`
+	IsSelf    bool      `json:"isSelf"`
+	HasData   bool      `json:"hasData"`
+	LastSeen  time.Time `json:"lastSeen,omitempty"`
+	Sessions  int       `json:"activeSessions"`
 }
 
 func viewOfUser(u *User, selfID string) adminUserView {
@@ -91,13 +91,8 @@ func viewOfUser(u *User, selfID string) adminUserView {
 		v.LastSeen = st.ModTime()
 	}
 	// Count live sessions without exposing the raw session IDs.
-	sessionsMu.RLock()
-	for _, s := range sessions {
-		if s.UserID == u.ID && s.ExpiresAt.After(time.Now()) {
-			v.Sessions++
-		}
-	}
-	sessionsMu.RUnlock()
+	// (Audit action 7 : passe par le SessionStore, plus d'accès direct au map.)
+	v.Sessions = sessionStore.CountActiveFor(u.ID)
 	return v
 }
 
@@ -326,14 +321,8 @@ func handleAdminToggleAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !req.IsAdmin && u.IsAdmin {
-		// Count remaining admins if we demote this one.
-		remaining := 0
-		for _, x := range usersByID {
-			if x.IsAdmin && x.ID != targetID {
-				remaining++
-			}
-		}
-		if remaining == 0 {
+		// Count remaining admins if we demote this one (via userStore).
+		if userStore.CountAdminsLocked(targetID) == 0 {
 			usersMu.Unlock()
 			writeErr(w, http.StatusConflict, "il doit rester au moins un admin")
 			return

@@ -20,13 +20,160 @@ type Session struct {
 	UserID    string    `json:"userId"`
 	CreatedAt time.Time `json:"createdAt"`
 	ExpiresAt time.Time `json:"expiresAt"`
+	// LastExtendedAt horodate la dernière prolongation sliding — throttle
+	// pour ne pas prendre le write lock à chaque requête authentifiée une
+	// fois passée la mi-vie de la session (voir currentUser).
+	LastExtendedAt time.Time `json:"lastExtendedAt,omitempty"`
+}
+
+/* =============================================================
+ * Audit modularité (action 7) — SessionStore.
+ *
+ * Première brique du passage « globals + mutex » → « stores encapsulés ».
+ * Le map de sessions et son mutex ne sont plus des variables de package
+ * éparpillées : tout accès passe par les méthodes du store, qui portent
+ * chacune leur invariant (expiry, sliding TTL, comptage). Les fonctions
+ * historiques (createSession, destroySession, currentUser…) deviennent des
+ * wrappers fins — AUCUN call site extérieur n'a changé.
+ *
+ * Recette à répliquer pour users (UserStore) puis rate-limit : mêmes
+ * méthodes, mêmes wrappers, tests parallélisables à la clé.
+ * ============================================================= */
+
+// SessionStore encapsule le map sid → Session et son verrou.
+type SessionStore struct {
+	mu sync.RWMutex
+	m  map[string]Session
+}
+
+var sessionStore = &SessionStore{m: map[string]Session{}}
+
+// Reset vide le store — usage tests uniquement.
+func (st *SessionStore) Reset() {
+	st.mu.Lock()
+	st.m = map[string]Session{}
+	st.mu.Unlock()
+}
+
+// Seed remplace le contenu du store — usage tests uniquement.
+func (st *SessionStore) Seed(m map[string]Session) {
+	st.mu.Lock()
+	st.m = m
+	st.mu.Unlock()
+}
+
+// Get renvoie la session et un booléen d'existence.
+func (st *SessionStore) Get(sid string) (Session, bool) {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	s, ok := st.m[sid]
+	return s, ok
+}
+
+// Snapshot copie le map pour une sérialisation hors verrou.
+func (st *SessionStore) Snapshot() map[string]Session {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	cp := make(map[string]Session, len(st.m))
+	for k, v := range st.m {
+		cp[k] = v
+	}
+	return cp
+}
+
+// Create mint une session de TTL standard et renvoie le sid opaque.
+func (st *SessionStore) Create(userID string) string {
+	id := randHex(32) // 256 bits
+	st.mu.Lock()
+	st.m[id] = Session{
+		UserID:    userID,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(sessionTTL),
+	}
+	st.mu.Unlock()
+	return id
+}
+
+// Destroy supprime une session (no-op si absente).
+func (st *SessionStore) Destroy(id string) {
+	st.mu.Lock()
+	delete(st.m, id)
+	st.mu.Unlock()
+}
+
+// DestroyAllFor supprime toutes les sessions d'un utilisateur.
+func (st *SessionStore) DestroyAllFor(userID string) {
+	st.mu.Lock()
+	for k, s := range st.m {
+		if s.UserID == userID {
+			delete(st.m, k)
+		}
+	}
+	st.mu.Unlock()
+}
+
+// PurgeExpired supprime les sessions expirées, renvoie le nombre purgé.
+func (st *SessionStore) PurgeExpired() int {
+	now := time.Now()
+	n := 0
+	st.mu.Lock()
+	for k, s := range st.m {
+		if s.ExpiresAt.Before(now) {
+			delete(st.m, k)
+			n++
+		}
+	}
+	st.mu.Unlock()
+	return n
+}
+
+// CountActiveFor compte les sessions non expirées d'un utilisateur
+// (vue admin) sans exposer les sids.
+func (st *SessionStore) CountActiveFor(userID string) int {
+	now := time.Now()
+	n := 0
+	st.mu.RLock()
+	for _, s := range st.m {
+		if s.UserID == userID && s.ExpiresAt.After(now) {
+			n++
+		}
+	}
+	st.mu.RUnlock()
+	return n
+}
+
+// Resolve résout un sid vers un userID. Applique l'expiry (purge à l'accès)
+// et le sliding TTL throttlé (au plus une prolongation/heure, cf. Audit L-01).
+// Renvoie "" pour une session inconnue ou expirée.
+func (st *SessionStore) Resolve(sid string) string {
+	st.mu.RLock()
+	s, ok := st.m[sid]
+	st.mu.RUnlock()
+	if !ok {
+		return ""
+	}
+	now := time.Now()
+	if s.ExpiresAt.Before(now) {
+		st.Destroy(sid)
+		markSessionsDirty()
+		return ""
+	}
+	half := sessionTTL / 2
+	if now.Sub(s.CreatedAt) > half && now.Sub(s.LastExtendedAt) > time.Hour {
+		st.mu.Lock()
+		if s2, ok := st.m[sid]; ok {
+			s2.ExpiresAt = now.Add(sessionTTL)
+			s2.LastExtendedAt = now
+			st.m[sid] = s2
+		}
+		st.mu.Unlock()
+		markSessionsDirty()
+	}
+	return s.UserID
 }
 
 var (
-	sessions   = map[string]Session{}
-	sessionsMu sync.RWMutex
-
-	sessionTTL          = 30 * 24 * time.Hour
+	sessionTTL = 30 * 24 * time.Hour
 	// Audit M-03 : sur HTTPS, on émet __Host-coach_sid / __Host-coach_csrf
 	// (prefixe qui force Secure + Path=/ + pas de Domain → durcissement
 	// supplémentaire contre l'injection de cookie depuis un sous-domaine).
@@ -63,25 +210,21 @@ func loadSessions() {
 		}
 		return
 	}
-	_ = json.Unmarshal(b, &sessions)
+	loaded := map[string]Session{}
+	_ = json.Unmarshal(b, &loaded)
 	// Purge any that expired while we were down.
 	now := time.Now()
-	for k, s := range sessions {
+	for k, s := range loaded {
 		if s.ExpiresAt.Before(now) {
-			delete(sessions, k)
+			delete(loaded, k)
 		}
 	}
-	log.Printf("loaded %d sessions", len(sessions))
+	sessionStore.Seed(loaded)
+	log.Printf("loaded %d sessions", len(loaded))
 }
 
 func saveSessions() {
-	sessionsMu.RLock()
-	cp := make(map[string]Session, len(sessions))
-	for k, v := range sessions {
-		cp[k] = v
-	}
-	sessionsMu.RUnlock()
-	if err := writeJSONAtomic(sessionsFile(), cp, 0o600); err != nil {
+	if err := writeJSONAtomic(sessionsFile(), sessionStore.Snapshot(), 0o600); err != nil {
 		log.Printf("sessions save: %v", err)
 	}
 }
@@ -91,47 +234,32 @@ func sessionJanitor() {
 	t := time.NewTicker(1 * time.Hour)
 	defer t.Stop()
 	for range t.C {
-		now := time.Now()
-		sessionsMu.Lock()
-		for k, s := range sessions {
-			if s.ExpiresAt.Before(now) {
-				delete(sessions, k)
-			}
-		}
-		sessionsMu.Unlock()
+		sessionStore.PurgeExpired()
 		saveSessions()
 	}
 }
 
+/* Wrappers historiques — l'API des call sites est inchangée. Audit
+ * modularité (action 1) : les `go saveSessions()` fire-and-forget sont
+ * remplacés par markSessionsDirty() — même garantie de durabilité
+ * (asynchrone dans les deux cas) mais les écritures rapprochées sont
+ * coalescées par le flusher de store.go au lieu de réécrire le fichier
+ * une fois par mutation. */
+
 func createSession(userID string) string {
-	id := randHex(32) // 256 bits
-	sessionsMu.Lock()
-	sessions[id] = Session{
-		UserID:    userID,
-		CreatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(sessionTTL),
-	}
-	sessionsMu.Unlock()
-	go saveSessions()
+	id := sessionStore.Create(userID)
+	markSessionsDirty()
 	return id
 }
 
 func destroySession(id string) {
-	sessionsMu.Lock()
-	delete(sessions, id)
-	sessionsMu.Unlock()
-	go saveSessions()
+	sessionStore.Destroy(id)
+	markSessionsDirty()
 }
 
 func destroyAllSessionsFor(userID string) {
-	sessionsMu.Lock()
-	for k, s := range sessions {
-		if s.UserID == userID {
-			delete(sessions, k)
-		}
-	}
-	sessionsMu.Unlock()
-	go saveSessions()
+	sessionStore.DestroyAllFor(userID)
+	markSessionsDirty()
 }
 
 func sessionID(r *http.Request) string {
@@ -163,30 +291,8 @@ func currentUser(r *http.Request) string {
 	if sid == "" {
 		return ""
 	}
-	sessionsMu.RLock()
-	s, ok := sessions[sid]
-	sessionsMu.RUnlock()
-	if !ok {
-		return ""
-	}
-	now := time.Now()
-	if s.ExpiresAt.Before(now) {
-		destroySession(sid)
-		return ""
-	}
-	// Sliding : si on est dans la seconde moitié de la fenêtre, prolonger.
-	// Pas de write disque ici (saveSessions est async dans le janitor) pour
-	// ne pas alourdir chaque requête authentifiée.
-	half := sessionTTL / 2
-	if now.Sub(s.CreatedAt) > half {
-		sessionsMu.Lock()
-		if s2, ok := sessions[sid]; ok {
-			s2.ExpiresAt = now.Add(sessionTTL)
-			sessions[sid] = s2
-		}
-		sessionsMu.Unlock()
-	}
-	return s.UserID
+	// Toute la logique (expiry, sliding TTL throttlé) vit dans le store.
+	return sessionStore.Resolve(sid)
 }
 
 func contextWithUser(ctx context.Context, uid string) context.Context {
