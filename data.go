@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -44,28 +43,27 @@ func userLock(id string) *sync.Mutex {
 // jusqu'à 24h+ après la suppression du compte. Best-effort sur le .bak —
 // son absence n'est pas une erreur.
 func deleteUserDataFiles(uid string) {
-	p := dataPath(uid)
-	_ = os.Remove(p)
-	_ = os.Remove(p + ".bak")
+	// deleteWorkout (sqlstore.go) route vers la base ou les fichiers selon le
+	// backend actif. En mode fichiers, supprime le data file ET son .bak.
+	deleteWorkout(uid)
 }
 
 // --- Handlers ---
 
 func handleLoadData(w http.ResponseWriter, r *http.Request) {
 	uid := currentUser(r)
-	path := dataPath(uid)
 
 	lock := userLock(uid)
 	lock.Lock()
-	b, err := os.ReadFile(path)
+	b, err := loadWorkout(uid)
 	lock.Unlock()
 
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			writeJSON(w, http.StatusOK, map[string]any{"data": nil})
-			return
-		}
 		writeErr(w, http.StatusInternalServerError, "lecture impossible")
+		return
+	}
+	if b == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"data": nil})
 		return
 	}
 	// Audit modularité action 8 : ETag fort sur le contenu du fichier.
@@ -191,7 +189,7 @@ func handleSaveData(w http.ResponseWriter, r *http.Request) {
 	lock := userLock(uid)
 	lock.Lock()
 	defer lock.Unlock()
-	if err := writeJSONAtomic(dataPath(uid), payload.Data, 0o600); err != nil {
+	if err := saveWorkout(uid, payload.Data); err != nil {
 		writeErr(w, http.StatusInternalServerError, "écriture impossible")
 		return
 	}
@@ -205,12 +203,11 @@ func handleSaveData(w http.ResponseWriter, r *http.Request) {
 // open JSON so the user can re-import it elsewhere.
 func handleExport(w http.ResponseWriter, r *http.Request) {
 	uid := currentUser(r)
-	path := dataPath(uid)
 	lock := userLock(uid)
 	lock.Lock()
-	b, err := os.ReadFile(path)
+	b, err := loadWorkout(uid)
 	lock.Unlock()
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "export impossible")
 		return
 	}

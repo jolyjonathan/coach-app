@@ -40,6 +40,10 @@ services:
       COACH_LISTEN:               0.0.0.0:8080
       COACH_DATA:                 /data
       COACH_PUBLIC:               /app/public
+      # DSN MariaDB. Le service `db` ci-dessous l'héberge ; le mot de passe
+      # vient de .env (DB_PASSWORD). Utilisée par l'app au runtime ET par les
+      # sous-commandes one-shot `--import` / `--verify`.
+      COACH_DB:                   "coach:${DB_PASSWORD:?missing in .env}@tcp(db:3306)/coach?parseTime=true&charset=utf8mb4&loc=UTC"
       # Pas de reverse proxy par défaut → on ne fait pas confiance aux
       # X-Forwarded-*. Passer à 1 uniquement si tu mets nginx/Caddy devant.
       COACH_TRUST_PROXY:          ${COACH_TRUST_PROXY:-0}
@@ -88,6 +92,39 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+    # Attend que MariaDB soit saine avant de démarrer (et avant un --import).
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # =============================================================
+  # Base de données MariaDB
+  # =============================================================
+  # Démarre VIERGE au premier `up` ; les tables sont créées par la
+  # sous-commande `--import` du binaire (CREATE TABLE IF NOT EXISTS). Les
+  # données sont persistées par le volume nommé `db_data`. Pas de `ports:`
+  # exposé → joignable uniquement depuis le réseau interne du compose.
+  db:
+    image: mariadb:lts            # LTS courante (épingle une version précise en prod, ex. mariadb:12.3)
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE:      coach
+      MARIADB_USER:          coach
+      MARIADB_PASSWORD:      "${DB_PASSWORD:?missing in .env}"
+      MARIADB_ROOT_PASSWORD: "${DB_ROOT_PASSWORD:?missing in .env}"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   coach_data:
@@ -98,3 +135,6 @@ volumes:
     #       type: none
     #       o: bind
     #       device: /var/lib/coach-app/data
+  db_data:
+    # Persiste la base MariaDB. NE PAS supprimer (`down -v`) tant que la
+    # migration n'est pas validée — sinon la base repart vierge.

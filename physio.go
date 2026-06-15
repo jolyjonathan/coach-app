@@ -29,7 +29,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -962,9 +961,8 @@ func mergePhysioIntoData(uid string, incoming []PhysioEntry) error {
 	lock := userLock(uid)
 	lock.Lock()
 	defer lock.Unlock()
-	path := dataPath(uid)
 	var data map[string]any
-	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
+	if b, err := loadWorkout(uid); err == nil && len(b) > 0 {
 		if err := json.Unmarshal(b, &data); err != nil {
 			data = nil
 		}
@@ -1047,5 +1045,5 @@ func mergePhysioIntoData(uid string, incoming []PhysioEntry) error {
 		out = append(out, byDate[d])
 	}
 	body["physio"] = out
-	return writeJSONAtomic(path, data, 0o600)
+	return saveWorkout(uid, data)
 }

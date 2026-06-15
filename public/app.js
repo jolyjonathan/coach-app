@@ -2270,41 +2270,53 @@ async function physioAppleHealthGuide() {
       <p style="margin:0 0 10px;font-size:13px;line-height:1.5">
         Apple ne donne pas d'accès web aux données Health — il faut <strong>un
         Raccourci iOS</strong> qui les pousse depuis ton iPhone. C'est <strong>gratuit
-        et natif Apple</strong> (pas d'app à acheter). Configuration unique ~5 min,
-        ensuite le push s'exécute chaque nuit automatiquement.
+        et natif Apple</strong> (pas d'app à acheter). Tout se fait <strong>sur ce
+        téléphone</strong>, en ~3 min. Ensuite le push s'exécute chaque nuit, tout seul.
+        <br><span class="mut" style="font-size:11px">Instructions à jour pour iOS 26 (app Raccourcis / Shortcuts).</span>
       </p>
 
-      <p style="margin:14px 0 6px;font-size:13px;font-weight:600">📱 Sur ton iPhone</p>
+      <p style="margin:14px 0 6px;font-size:13px;font-weight:600">1 · Copie ton URL</p>
+      <p style="margin:0 0 4px;font-size:12px;color:var(--mut)">Appuie sur « Copier l'URL » en bas, puis garde-la — tu la colleras à l'étape 3.</p>
+      <code style="display:block;font-size:11px;background:var(--bg);padding:8px;
+            border-radius:4px;word-break:break-all;border:1px solid var(--line);
+            font-family:ui-monospace,Menlo,monospace;margin:4px 0 14px">${escapeHtml(url)}</code>
+
+      <p style="margin:0 0 6px;font-size:13px;font-weight:600">2 · Crée le raccourci</p>
       <ol style="margin:0 0 12px;padding-left:20px;font-size:13px;line-height:1.7">
-        <li>Ouvre l'app <strong>Raccourcis</strong> (Shortcuts) — préinstallée sur iOS.</li>
-        <li>Onglet <strong>Mes raccourcis</strong> → <strong>+</strong> en haut à droite → renomme « Coach Sync ».</li>
-        <li>Ajoute action <strong>« Obtenir des échantillons de santé »</strong>, choisis <em>Variabilité de la fréquence cardiaque</em> (HRV) sur la dernière journée.</li>
-        <li>Ajoute <strong>« Calculer la moyenne »</strong> sur le résultat.</li>
-        <li>Répète les deux étapes pour <em>Heure de sommeil</em> et <em>Fréquence cardiaque au repos</em>.</li>
-        <li>Ajoute action <strong>« Obtenir le contenu de l'URL »</strong> :
+        <li>Ouvre l'app <strong>Raccourcis</strong> — préinstallée sur iOS.</li>
+        <li>Onglet <strong>Raccourcis</strong> → bouton <strong>+</strong> (en haut à droite) → tape sur le nom en haut pour le renommer « Coach Sync ».</li>
+        <li>Touche <strong>« Ajouter une action »</strong>, cherche <strong>« Rechercher des échantillons de santé »</strong>. Règle <em>Type</em> = <em>Variabilité de la fréq. cardiaque</em> (HRV) et le filtre de date sur la dernière journée.</li>
+        <li>Ajoute <strong>« Calculer des statistiques »</strong> → <em>Moyenne</em> sur le résultat précédent.</li>
+        <li>Refais les deux dernières actions pour <em>Sommeil</em> (depuis iOS 26 les phases sont dispo directement) et <em>Fréquence cardiaque au repos</em>.</li>
+      </ol>
+
+      <p style="margin:0 0 6px;font-size:13px;font-weight:600">3 · Envoie vers le coach</p>
+      <ol start="6" style="margin:0 0 12px;padding-left:20px;font-size:13px;line-height:1.7">
+        <li>Ajoute <strong>« Obtenir le contenu de l'URL »</strong>, puis touche <strong>« Afficher plus »</strong> :
           <ul style="margin:4px 0 4px;padding-left:18px">
-            <li>URL : l'URL ci-dessous</li>
+            <li>URL : <em>colle</em> l'URL copiée à l'étape 1</li>
             <li>Méthode : <code>POST</code></li>
-            <li>Demande : <code>JSON</code></li>
-            <li>Corps de la requête JSON :
+            <li>Corps de la requête : <code>JSON</code></li>
+            <li>Champs JSON (touche chaque valeur entre crochets et insère la variable correspondante) :
               <code style="display:block;font-size:10.5px;background:var(--bg);padding:6px 8px;border-radius:4px;border:1px solid var(--line);font-family:ui-monospace,Menlo,monospace;margin-top:4px">{ "date": "[Date du jour ISO]", "hrv": [Moyenne HRV], "sleep": [Moyenne Sommeil], "rhr": [Moyenne RHR] }</code>
             </li>
           </ul>
         </li>
-        <li>Onglet <strong>Automatisation</strong> → <strong>+</strong> → <strong>Heure du jour</strong> → 06:00 → Quotidien → <em>Exécuter immédiatement</em> (sans confirmation) → choisis le raccourci « Coach Sync ».</li>
       </ol>
 
-      <p style="margin:0 0 4px;font-size:12px;color:var(--mut)">URL webhook (à coller dans le Raccourci) :</p>
-      <code style="display:block;font-size:11px;background:var(--bg);padding:8px;
-            border-radius:4px;word-break:break-all;border:1px solid var(--line);
-            font-family:ui-monospace,Menlo,monospace;margin-bottom:10px">${escapeHtml(url)}</code>
+      <p style="margin:0 0 6px;font-size:13px;font-weight:600">4 · Automatise (push quotidien)</p>
+      <ol start="7" style="margin:0 0 12px;padding-left:20px;font-size:13px;line-height:1.7">
+        <li>Onglet <strong>Automatisation</strong> (en bas) → <strong>+</strong> → <strong>« Heure de la journée »</strong> → 06:00 → <em>Quotidiennement</em>.</li>
+        <li>Choisis <strong>« Exécuter immédiatement »</strong> (depuis iOS 17 c'est par défaut, aucune confirmation requise) → sélectionne le raccourci <strong>« Coach Sync »</strong> → <strong>OK</strong>.</li>
+      </ol>
 
       <p class="mut" style="font-size:11px;margin:0;line-height:1.5">
         Le serveur accepte le format <code>{ date, hrv, sleep, rhr }</code> directement.
         Le secret de l'URL est unique à ton compte ; il peut être rotaté à tout moment
-        (l'ancienne URL devient invalide). Si tu veux pousser plus de métriques
+        (l'ancienne URL devient invalide). Pour pousser plus de métriques
         (énergie active, pas, masse corporelle…), ajoute simplement les champs
-        correspondants au JSON.
+        correspondants au JSON. Astuce : lance le raccourci une fois à la main pour
+        valider — iOS te demandera l'autorisation d'accès à Santé au premier run.
       </p>
     `,
     buttons: [
