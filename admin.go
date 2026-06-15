@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -86,9 +85,9 @@ func viewOfUser(u *User, selfID string) adminUserView {
 		IsAdmin:   u.IsAdmin,
 		IsSelf:    u.ID == selfID,
 	}
-	if st, err := os.Stat(dataPath(u.ID)); err == nil {
+	if exists, updatedAt := workoutMeta(u.ID); exists {
 		v.HasData = true
-		v.LastSeen = st.ModTime()
+		v.LastSeen = updatedAt
 	}
 	// Count live sessions without exposing the raw session IDs.
 	// (Audit action 7 : passe par le SessionStore, plus d'accès direct au map.)
@@ -374,10 +373,8 @@ func handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	usersMu.Unlock()
 	saveUsers()
 	destroyAllSessionsFor(targetID)
-	// Remove the workout data file. If it doesn't exist, that's fine.
-	if err := os.Remove(dataPath(targetID)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		log.Printf("admin delete %s: data remove: %v", targetID, err)
-	}
+	// Efface les données workout de l'utilisateur (RGPD art. 17).
+	deleteWorkout(targetID)
 	auditAdmin(r, "delete_user", targetID, "emailHash="+hashEmailForLog(email))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -393,17 +390,16 @@ func handleAdminGetUserData(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "utilisateur introuvable")
 		return
 	}
-	path := dataPath(targetID)
 	lock := userLock(targetID)
 	lock.Lock()
-	b, err := os.ReadFile(path)
+	b, err := loadWorkout(targetID)
 	lock.Unlock()
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			writeJSON(w, http.StatusOK, map[string]any{"data": nil})
-			return
-		}
 		writeErr(w, http.StatusInternalServerError, "lecture impossible")
+		return
+	}
+	if b == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"data": nil})
 		return
 	}
 	var v any

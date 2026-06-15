@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"os"
 	"testing"
 )
 
@@ -64,7 +63,7 @@ func TestParseAppleHealthRejectsGarbage(t *testing.T) {
 // TestMergePhysioIntoData vérifie le merge par date (replace même date) et le
 // cap à maxPhysioEntries.
 func TestMergePhysioIntoData(t *testing.T) {
-	dataDir = t.TempDir()
+	resetDBTables(t)
 	uid := "a1b2c3d4e5f60718"
 
 	// Premier merge.
@@ -110,13 +109,16 @@ func TestMergePhysioRejectsBadUID(t *testing.T) {
 
 func readDataFile(t *testing.T, uid string) map[string]any {
 	t.Helper()
-	b, err := os.ReadFile(dataPath(uid))
+	b, err := loadWorkout(uid)
 	if err != nil {
-		t.Fatalf("read data file: %v", err)
+		t.Fatalf("load workout: %v", err)
+	}
+	if b == nil {
+		t.Fatalf("workout %s absent en base", uid)
 	}
 	var v map[string]any
 	if err := json.Unmarshal(b, &v); err != nil {
-		t.Fatalf("unmarshal data file: %v", err)
+		t.Fatalf("unmarshal workout: %v", err)
 	}
 	return v
 }

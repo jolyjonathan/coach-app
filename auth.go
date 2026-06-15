@@ -115,24 +115,9 @@ func loadUsers() {
 	}
 	dummyHash = h
 
-	var list []*User
-	if storageIsSQL() {
-		l, err := dbLoadUsers()
-		if err != nil {
-			log.Fatalf("users load (sql): %v", err)
-		}
-		list = l
-	} else {
-		b, err := os.ReadFile(usersFile())
-		if err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				log.Printf("users read: %v", err)
-			}
-			return
-		}
-		if err := json.Unmarshal(b, &list); err != nil {
-			log.Fatalf("users parse: %v", err)
-		}
+	list, err := dbLoadUsers()
+	if err != nil {
+		log.Fatalf("users load (sql): %v", err)
 	}
 	migratedTok := 0
 	migratedTotp := 0
@@ -160,14 +145,8 @@ func loadUsers() {
 }
 
 func saveUsers() {
-	if storageIsSQL() {
-		if err := dbSaveAllUsers(userStore.Snapshot()); err != nil {
-			log.Printf("users save (sql): %v", err)
-		}
-		return
-	}
-	if err := writeJSONAtomic(usersFile(), userStore.Snapshot(), 0o600); err != nil {
-		log.Printf("users save: %v", err)
+	if err := dbSaveAllUsers(userStore.Snapshot()); err != nil {
+		log.Printf("users save (sql): %v", err)
 	}
 }
 

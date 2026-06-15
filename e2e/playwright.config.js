@@ -38,6 +38,10 @@ module.exports = defineConfig({
         'COACH_2FA_REQUIRED=0',
         'COACH_ALLOW_REGISTRATION=1',
         'COACH_DATA=/tmp/coach-e2e-data',
+        // Backend MariaDB obligatoire. La CI fournit un service MariaDB et
+        // exporte COACH_DB ; en local, défaut sur une base coach_e2e locale.
+        'COACH_DB="' + (process.env.COACH_DB ||
+          'root:root@tcp(127.0.0.1:3306)/coach_e2e?parseTime=true&loc=UTC&charset=utf8mb4') + '"',
         'COACH_PUBLIC="$(git rev-parse --show-toplevel)/public"',
         'COACH_LISTEN=127.0.0.1:' + PORT,
         '/tmp/coach-e2e',

@@ -73,17 +73,15 @@ func main() {
 	validateTokenKeyAtBoot()
 	probeDataDirWritable()
 
-	// Backend de stockage : MariaDB si COACH_DB est défini, sinon fichiers
-	// JSON (comportement historique, et défaut des tests). Le schéma est
-	// garanti idempotemment — un boot sur base vierge fonctionne.
-	if os.Getenv("COACH_DB") != "" {
-		if err := initSQL(); err != nil {
-			log.Fatalf("init SQL (COACH_DB): %v", err)
-		}
-		log.Printf("backend stockage : MariaDB")
-	} else {
-		log.Printf("backend stockage : fichiers JSON (%s)", dataDir)
+	// Backend de stockage : MariaDB, OBLIGATOIRE. Plus de backend fichiers.
+	// Le schéma est garanti idempotemment au boot — une base vierge marche.
+	if os.Getenv("COACH_DB") == "" {
+		log.Fatalf("COACH_DB requis : DSN MariaDB, ex. coach:pass@tcp(db:3306)/coach?parseTime=true")
 	}
+	if err := initSQL(); err != nil {
+		log.Fatalf("init SQL (COACH_DB): %v", err)
+	}
+	log.Printf("backend stockage : MariaDB")
 
 	loadUsers()
 	ensureBootstrapAdmin()

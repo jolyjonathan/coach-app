@@ -3,11 +3,8 @@ package main
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -203,24 +200,10 @@ const userCtxKey ctxKey = 1
 func sessionsFile() string { return filepath.Join(dataDir, "sessions.json") }
 
 func loadSessions() {
-	var loaded map[string]Session
-	if storageIsSQL() {
-		m, err := dbLoadSessions()
-		if err != nil {
-			log.Printf("sessions load (sql): %v", err)
-			return
-		}
-		loaded = m
-	} else {
-		b, err := os.ReadFile(sessionsFile())
-		if err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				log.Printf("sessions read: %v", err)
-			}
-			return
-		}
-		loaded = map[string]Session{}
-		_ = json.Unmarshal(b, &loaded)
+	loaded, err := dbLoadSessions()
+	if err != nil {
+		log.Printf("sessions load (sql): %v", err)
+		return
 	}
 	// Purge any that expired while we were down.
 	now := time.Now()
@@ -234,14 +217,8 @@ func loadSessions() {
 }
 
 func saveSessions() {
-	if storageIsSQL() {
-		if err := dbSaveAllSessions(sessionStore.Snapshot()); err != nil {
-			log.Printf("sessions save (sql): %v", err)
-		}
-		return
-	}
-	if err := writeJSONAtomic(sessionsFile(), sessionStore.Snapshot(), 0o600); err != nil {
-		log.Printf("sessions save: %v", err)
+	if err := dbSaveAllSessions(sessionStore.Snapshot()); err != nil {
+		log.Printf("sessions save (sql): %v", err)
 	}
 }
 

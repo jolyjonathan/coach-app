@@ -8,14 +8,47 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+// TestMain ouvre la base de test (COACH_DB) une fois pour tout le package et
+// garantit le schéma. Le backend étant désormais MariaDB-only, les tests ont
+// besoin d'une base : la CI fournit un service MariaDB et exporte COACH_DB.
+// Sans COACH_DB (dev local sans base), on saute la suite plutôt que d'échouer.
+func TestMain(m *testing.M) {
+	if os.Getenv("COACH_DB") == "" {
+		fmt.Fprintln(os.Stderr,
+			"COACH_DB non défini — tests ignorés. Fournis une base MariaDB de test, ex. :\n"+
+				`  COACH_DB="root:root@tcp(127.0.0.1:3306)/coach_test?parseTime=true&loc=UTC" go test ./...`)
+		os.Exit(0)
+	}
+	if err := initSQL(); err != nil {
+		fmt.Fprintf(os.Stderr, "init SQL test: %v\n", err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	closeSQL()
+	os.Exit(code)
+}
+
+// resetDBTables vide les tables entre deux tests (isolation). Les tests du
+// package tournent en série, donc un TRUNCATE global est sûr.
+func resetDBTables(t *testing.T) {
+	t.Helper()
+	for _, tbl := range []string{"users", "sessions", "workouts"} {
+		if _, err := dbConn.Exec("TRUNCATE TABLE " + tbl); err != nil {
+			t.Fatalf("truncate %s: %v", tbl, err)
+		}
+	}
+}
 
 // newTestServer returns an *http.ServeMux wired like main() but with state
 // scoped to a fresh temp data dir. Each caller gets a clean slate: no users,
@@ -68,8 +101,12 @@ func newTestServer(t *testing.T) (*http.ServeMux, func()) {
 	stravaAthleteMu.Unlock()
 
 	// userFileLocks est un sync.Map de mutex par-uid ; on le réinitialise pour
-	// ne pas conserver des locks pointant vers des fichiers de tmp dirs détruits.
+	// ne pas conserver des locks pointant vers des locks obsolètes.
 	userFileLocks = sync.Map{}
+
+	// Tables vidées : chaque test démarre sur une base propre (users, sessions,
+	// workouts), en miroir du wipe des maps en mémoire ci-dessus.
+	resetDBTables(t)
 
 	// loadUsers also seeds dummyHash, which we need for login timing-safety.
 	loadUsers()
