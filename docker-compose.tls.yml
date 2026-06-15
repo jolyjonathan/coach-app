@@ -52,6 +52,10 @@ services:
       COACH_TRUST_PROXY:          1
       COACH_ALLOW_REGISTRATION:   ${COACH_ALLOW_REGISTRATION:-0}
       COACH_2FA_REQUIRED:         ${COACH_2FA_REQUIRED:-1}
+      # DSN MariaDB. Si défini, l'app utilise la base (et migre les fichiers
+      # existants au premier boot). Commente cette ligne pour rester en mode
+      # fichiers JSON.
+      COACH_DB:                   "coach:${DB_PASSWORD:?missing in .env}@tcp(db:3306)/coach?parseTime=true&charset=utf8mb4&loc=UTC"
       COACH_TOKEN_KEY:            "${COACH_TOKEN_KEY:?missing in .env, generate with: openssl rand -hex 32}"
       COACH_ADMIN_EMAIL:          ${COACH_ADMIN_EMAIL:-}
       COACH_ADMIN_PASSWORD:       ${COACH_ADMIN_PASSWORD:-}
@@ -88,6 +92,36 @@ services:
         max-file: "5"
     networks:
       - coach-net
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Base MariaDB — démarre vierge, données persistées par le volume db_data.
+  # Les tables sont créées et les fichiers existants importés automatiquement
+  # au premier boot de l'app (seed transparent). Pas de port exposé.
+  db:
+    image: mariadb:lts            # épingle une version précise en prod, ex. mariadb:12.3
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE:      coach
+      MARIADB_USER:          coach
+      MARIADB_PASSWORD:      "${DB_PASSWORD:?missing in .env}"
+      MARIADB_ROOT_PASSWORD: "${DB_ROOT_PASSWORD:?missing in .env}"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - coach-net
 
   caddy:
     image: caddy:2-alpine
@@ -110,6 +144,7 @@ services:
 
 volumes:
   coach_data:
+  db_data:
   caddy_data:
   caddy_config:
 

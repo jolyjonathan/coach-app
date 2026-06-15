@@ -33,15 +33,6 @@ func main() {
 	// autre initialisation pour rester rapide et sans effet de bord.
 	healthcheckFlag := flag.Bool("healthcheck", false,
 		"perform HTTP healthcheck against COACH_LISTEN and exit (used by Docker HEALTHCHECK)")
-	// Sous-commandes de migration SQL (voir migrate.go). Comme le healthcheck,
-	// ce sont des modes one-shot du binaire — indispensable car l'image runtime
-	// distroless n'a pas de shell pour lancer un outil séparé.
-	importFlag := flag.Bool("import", false,
-		"import data/*.json into the SQL database (COACH_DB DSN) and exit")
-	verifyFlag := flag.Bool("verify", false,
-		"verify the SQL database matches data/*.json and exit (non-zero on mismatch)")
-	dryRunFlag := flag.Bool("dry-run", false,
-		"with --import: parse and count only, no DB writes")
 	flag.StringVar(&dataDir, "data", getenv("COACH_DATA", "./data"), "data directory (chmod 700)")
 	flag.StringVar(&publicDir, "public", getenv("COACH_PUBLIC", "./public"), "public assets directory")
 	flag.StringVar(&listenAddr, "listen", getenv("COACH_LISTEN", "127.0.0.1:8080"), "listen address")
@@ -62,22 +53,6 @@ func main() {
 		// Mode healthcheck — call l'instance qui tourne et exit.
 		runHealthcheck()
 		// runHealthcheck appelle os.Exit, on n'arrive pas ici en théorie.
-		return
-	}
-
-	// Modes migration : lecture des fichiers + accès SQL, sans démarrer le
-	// serveur. Placés avant validateTokenKeyAtBoot/probeDataDirWritable —
-	// l'import lit data/ et écrit en base, il n'a pas besoin du reste du boot.
-	if *importFlag {
-		if err := runImport(*dryRunFlag); err != nil {
-			log.Fatalf("import: %v", err)
-		}
-		return
-	}
-	if *verifyFlag {
-		if err := runVerify(); err != nil {
-			log.Fatalf("verify: %v", err)
-		}
 		return
 	}
 

@@ -7,20 +7,19 @@ Bascule de stockage SANS toucher au modèle runtime : les maps en mémoire
 (usersByID, sessionStore) restent la source de vérité pendant l'exécution ;
 ce fichier ne change QUE le support de persistance — fichiers JSON ⇄ MariaDB.
 
-Activation : si COACH_DB (DSN) est défini, initSQL() ouvre la connexion et
-dbConn != nil → tous les chemins de persistance passent par la base. Sinon
-dbConn == nil → comportement fichiers historique inchangé (et les tests, qui
-n'ont pas de base, continuent de tourner sur tmpdir).
+Activation : si COACH_DB (DSN) est défini, initSQL() ouvre la connexion,
+garantit le schéma, importe UNE FOIS les données fichiers existantes si la
+base est vierge (seed transparent — aucun script externe à lancer), puis
+dbConn != nil → tous les chemins de persistance passent par la base.
+Sinon dbConn == nil → comportement fichiers historique inchangé (et les tests,
+qui n'ont pas de base, continuent de tourner sur tmpdir).
 
 Stratégie « lift & shift » :
   - users / sessions : on réécrit l'ensemble du snapshot à chaque save
     (DELETE + INSERT en transaction). Sémantique identique à l'ancienne
     réécriture complète de users.json / sessions.json, donc aucun call site
-    de mutation ne change. Coût négligeable pour une instance self-hosted ;
-    une écriture par-ligne viendra avec la normalisation, plus tard.
+    de mutation ne change.
   - workouts : déjà par-utilisateur → lecture/écriture d'une seule ligne.
-
-Le driver mysql est enregistré via l'import blank de migrate.go.
 */
 
 import (
@@ -28,10 +27,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 var (
@@ -42,12 +45,65 @@ var (
 	dbSessWriteMu  sync.Mutex
 )
 
+// schemaDDL est joué à l'init : la base peut donc être totalement vierge au
+// premier `docker compose up`. Idempotent.
+const schemaDDL = `
+CREATE TABLE IF NOT EXISTS users (
+  id                    VARCHAR(64)  NOT NULL PRIMARY KEY,
+  email_lower           VARCHAR(320) NOT NULL,
+  password_hash         VARCHAR(255) NOT NULL,
+  created_at            DATETIME(6)  NOT NULL,
+  is_admin              TINYINT(1)   NOT NULL DEFAULT 0,
+  totp_secret           TEXT         NULL,
+  health_consent        JSON         NULL,
+  algo_opt_out          TINYINT(1)   NOT NULL DEFAULT 0,
+  physio_tokens         JSON         NULL,
+  physio_webhook_secret VARCHAR(128) NULL,
+  physio_last_sync      JSON         NULL,
+  recovery_codes        JSON         NULL,
+  UNIQUE KEY uniq_email (email_lower)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS sessions (
+  sid              VARCHAR(128) NOT NULL PRIMARY KEY,
+  user_id          VARCHAR(64)  NOT NULL,
+  created_at       DATETIME(6)  NOT NULL,
+  expires_at       DATETIME(6)  NOT NULL,
+  last_extended_at DATETIME(6)  NULL,
+  KEY idx_sessions_user (user_id),
+  KEY idx_sessions_expires (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS workouts (
+  user_id    VARCHAR(64) NOT NULL PRIMARY KEY,
+  data       JSON        NOT NULL,
+  updated_at DATETIME(6) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+`
+
 // storageIsSQL indique si le backend base est actif.
 func storageIsSQL() bool { return dbConn != nil }
 
-// initSQL ouvre la connexion (COACH_DB) et garantit le schéma (idempotent).
+// openDB ouvre la connexion SQL depuis COACH_DB et la ping.
+func openDB() (*sql.DB, error) {
+	dsn := os.Getenv("COACH_DB")
+	if strings.TrimSpace(dsn) == "" {
+		return nil, errors.New("COACH_DB non défini (DSN MariaDB attendue)")
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetConnMaxLifetime(2 * time.Minute)
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("ping base: %w", err)
+	}
+	return db, nil
+}
+
+// initSQL ouvre la connexion, garantit le schéma, et fait le seed initial
+// depuis les fichiers si la base est vierge.
 func initSQL() error {
-	db, err := openDB() // défini dans migrate.go
+	db, err := openDB()
 	if err != nil {
 		return err
 	}
@@ -64,6 +120,10 @@ func initSQL() error {
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxIdleTime(5 * time.Minute)
 	dbConn = db
+
+	if err := seedFromFilesIfEmpty(); err != nil {
+		return fmt.Errorf("seed initial: %w", err)
+	}
 	return nil
 }
 
@@ -72,6 +132,170 @@ func closeSQL() {
 	if dbConn != nil {
 		_ = dbConn.Close()
 	}
+}
+
+// seedFromFilesIfEmpty importe UNE FOIS les données fichiers (users, sessions,
+// workouts) vers la base si celle-ci est vierge. Garde-fou par sentinel
+// (data/.sql-seeded) pour ne jamais rejouer le seed — même si tous les users
+// venaient à être supprimés ensuite. Migration transparente : aucun script à
+// lancer, ça se fait au premier boot avec COACH_DB défini. Les fichiers JSON
+// restent intacts (rollback).
+func seedFromFilesIfEmpty() error {
+	sentinel := filepath.Join(dataDir, ".sql-seeded")
+	if _, err := os.Stat(sentinel); err == nil {
+		return nil // seed déjà effectué
+	}
+	markSeeded := func() {
+		_ = os.WriteFile(sentinel, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
+	}
+
+	var n int
+	if err := dbConn.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		markSeeded() // base déjà peuplée par un autre moyen → on n'écrase rien
+		return nil
+	}
+
+	users, err := readUsersFile()
+	if err != nil {
+		return err
+	}
+	sessions, err := readSessionsFile()
+	if err != nil {
+		return err
+	}
+	wf, err := workoutFiles()
+	if err != nil {
+		return err
+	}
+	if len(users) == 0 && len(sessions) == 0 && len(wf) == 0 {
+		markSeeded() // nouvelle install, rien à migrer
+		return nil
+	}
+
+	if err := dbSaveAllUsers(users); err != nil {
+		return fmt.Errorf("seed users: %w", err)
+	}
+	if err := dbSaveAllSessions(sessions); err != nil {
+		return fmt.Errorf("seed sessions: %w", err)
+	}
+	for uid, path := range wf {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("seed workout %s: %w", uid, err)
+		}
+		if !json.Valid(b) {
+			continue
+		}
+		info, _ := os.Stat(path)
+		mtime := time.Now().UTC()
+		if info != nil {
+			mtime = info.ModTime().UTC()
+		}
+		if _, err := dbConn.Exec(
+			`INSERT INTO workouts (user_id,data,updated_at) VALUES (?,?,?)
+			 ON DUPLICATE KEY UPDATE data=VALUES(data), updated_at=VALUES(updated_at)`,
+			uid, b, mtime); err != nil {
+			return fmt.Errorf("seed workout %s: %w", uid, err)
+		}
+	}
+	markSeeded()
+	log.Printf("seed initial MariaDB depuis fichiers : %d users, %d sessions, %d workouts (sentinel posé)",
+		len(users), len(sessions), len(wf))
+	return nil
+}
+
+// ---------- lecture des fichiers (pour le seed) ----------
+
+func readUsersFile() ([]*User, error) {
+	b, err := os.ReadFile(usersFile())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var list []*User
+	if err := json.Unmarshal(b, &list); err != nil {
+		return nil, fmt.Errorf("parse users.json: %w", err)
+	}
+	return list, nil
+}
+
+func readSessionsFile() (map[string]Session, error) {
+	b, err := os.ReadFile(sessionsFile())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	m := map[string]Session{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("parse sessions.json: %w", err)
+	}
+	return m, nil
+}
+
+// workoutFiles liste les data files utilisateur valides (uid → chemin),
+// en ignorant .bak/.tmp et le sentinel _invalid.json.
+func workoutFiles() (map[string]string, error) {
+	dir := filepath.Join(dataDir, "workouts")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return map[string]string{}, nil
+		}
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		uid := strings.TrimSuffix(name, ".json")
+		if uid == "_invalid" || !validUserID.MatchString(uid) {
+			continue
+		}
+		out[uid] = filepath.Join(dir, name)
+	}
+	return out, nil
+}
+
+// jsonColOrNil sérialise v pour une colonne JSON nullable. Renvoie nil
+// (→ SQL NULL) quand v est vide/nil.
+func jsonColOrNil(v any) (any, error) {
+	switch t := v.(type) {
+	case nil:
+		return nil, nil
+	case map[string]string:
+		if len(t) == 0 {
+			return nil, nil
+		}
+	case map[string]time.Time:
+		if len(t) == 0 {
+			return nil, nil
+		}
+	case []string:
+		if len(t) == 0 {
+			return nil, nil
+		}
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func strColOrNil(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // ---------- users ----------
@@ -223,7 +447,6 @@ func dbSaveAllSessions(m map[string]Session) error {
 // ---------- workouts (blob par utilisateur) ----------
 
 // loadWorkout renvoie le JSON brut du data file utilisateur (nil si absent).
-// Unifie les deux backends pour les handlers de data.go / physio.go.
 func loadWorkout(uid string) ([]byte, error) {
 	if storageIsSQL() {
 		var data []byte
