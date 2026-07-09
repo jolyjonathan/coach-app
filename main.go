@@ -33,6 +33,10 @@ func main() {
 	// autre initialisation pour rester rapide et sans effet de bord.
 	healthcheckFlag := flag.Bool("healthcheck", false,
 		"perform HTTP healthcheck against COACH_LISTEN and exit (used by Docker HEALTHCHECK)")
+	// --rotate-key : rotation de COACH_TOKEN_KEY (ré-encrypte TOTP + tokens
+	// API en base). App arrêtée requise. Voir rotate.go et SECURITY.md.
+	rotateKeyFlag := flag.Bool("rotate-key", false,
+		"re-encrypt all at-rest secrets from COACH_TOKEN_KEY_OLD to COACH_TOKEN_KEY, then exit")
 	flag.StringVar(&dataDir, "data", getenv("COACH_DATA", "./data"), "data directory (chmod 700)")
 	flag.StringVar(&publicDir, "public", getenv("COACH_PUBLIC", "./public"), "public assets directory")
 	flag.StringVar(&listenAddr, "listen", getenv("COACH_LISTEN", "127.0.0.1:8080"), "listen address")
@@ -53,6 +57,12 @@ func main() {
 		// Mode healthcheck — call l'instance qui tourne et exit.
 		runHealthcheck()
 		// runHealthcheck appelle os.Exit, on n'arrive pas ici en théorie.
+		return
+	}
+
+	if *rotateKeyFlag {
+		// Mode rotation de clé — opère en base puis exit (voir rotate.go).
+		runRotateKey()
 		return
 	}
 
@@ -237,6 +247,7 @@ func main() {
 		recoverPanic,   // catch-all for panics, returns 500 without leaking stack
 		accessLog,      // access logging (sans body/cookies)
 		secureHeaders,  // CSP, HSTS, X-Frame-Options, etc.
+		gzipStatic,     // compression des statiques (mode HTTP direct — voir gzip.go)
 		maxBody(1<<20), // hard cap: 1 MiB per request
 	)
 

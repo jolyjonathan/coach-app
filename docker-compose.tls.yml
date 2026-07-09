@@ -100,8 +100,14 @@ services:
   # Les tables sont créées et les fichiers existants importés automatiquement
   # au premier boot de l'app (seed transparent). Pas de port exposé.
   db:
-    image: mariadb:lts            # épingle une version précise en prod, ex. mariadb:12.3
+    # Épinglée tag + digest (2026-07-09) — même version que docker-compose.yml.
+    image: mariadb:12.3.2@sha256:628f228f0fd5913a220438693576b29b6fe4dc1fa0a1298c0e98579fae28635f
     restart: unless-stopped
+    command:
+      - --innodb-buffer-pool-size=128M
+      - --max-connections=50
+      - --performance-schema=OFF
+      - --skip-name-resolve
     environment:
       MARIADB_DATABASE:      coach
       MARIADB_USER:          coach
@@ -115,6 +121,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
     logging:
       driver: json-file
       options:
@@ -123,8 +137,52 @@ services:
     networks:
       - coach-net
 
+  # Backups automatiques — voir BACKUPS.md et les commentaires du service
+  # équivalent dans docker-compose.yml.
+  db-backup:
+    image: mariadb:12.3.2@sha256:628f228f0fd5913a220438693576b29b6fe4dc1fa0a1298c0e98579fae28635f
+    restart: unless-stopped
+    entrypoint: ["bash", "/scripts/db-backup.sh"]
+    command: ["daemon"]
+    environment:
+      DB_HOST:           db
+      DB_NAME:           coach
+      DB_USER:           coach
+      DB_PASSWORD:       "${DB_PASSWORD:?missing in .env}"
+      BACKUP_HOUR:       ${BACKUP_HOUR:-03}
+      RETENTION_DAILY:   ${RETENTION_DAILY:-7}
+      RETENTION_WEEKLY:  ${RETENTION_WEEKLY:-4}
+      BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE:-}
+    volumes:
+      - ./scripts/db-backup.sh:/scripts/db-backup.sh:ro
+      - db_backups:/backups
+      - coach_data:/coach-data:ro
+    healthcheck:
+      test: ["CMD", "bash", "/scripts/db-backup.sh", "check"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 2m
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    networks:
+      - coach-net
+    depends_on:
+      db:
+        condition: service_healthy
+
   caddy:
-    image: caddy:2-alpine
+    # Épinglée tag + digest (2026-07-09). Mise à jour : bumper tag + digest ensemble.
+    image: caddy:2.11.2-alpine@sha256:834468128c7696cec0ceea6172f7d692daf645ae51983ca76e39da54a97c570d
     container_name: coach-caddy
     restart: unless-stopped
     ports:
@@ -145,6 +203,7 @@ services:
 volumes:
   coach_data:
   db_data:
+  db_backups:
   caddy_data:
   caddy_config:
 

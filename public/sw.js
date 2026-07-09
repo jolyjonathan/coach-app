@@ -32,7 +32,8 @@
 // Bump à v7 : découpage modularité (core.js, exercises-data.js,
 // gamification.js extraits d'app.js ; qrcode.js désormais chargé à la
 // demande mais conservé dans le shell pour l'enrôlement 2FA hors-ligne).
-const SHELL_VERSION = 'coach-shell-v7';
+// Bump à v8 : ajout de blockreview.js (bilan de fin de bloc Issurin).
+const SHELL_VERSION = 'coach-shell-v8';
 const DATA_VERSION  = 'coach-data-v1';
 
 // Tous les JS et CSS chargés par index.html doivent être ici, sinon offline
@@ -56,6 +57,7 @@ const SHELL_ASSETS = [
   '/static/banister.js',
   '/static/science.js',
   '/static/cycle.js',
+  '/static/blockreview.js',
   '/manifest.json',
   '/icon.svg',
 ];

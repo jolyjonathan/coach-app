@@ -115,6 +115,24 @@ var (
 	tokenAEADErr  error
 )
 
+// newAEADFromHexKey construit un AEAD AES-256-GCM depuis une clé 32 bytes hex.
+// Extrait pour être réutilisable avec une clé arbitraire (rotation de clé :
+// on doit tenir l'ancienne ET la nouvelle en même temps — cf. rotate.go).
+func newAEADFromHexKey(key string) (cipher.AEAD, error) {
+	raw, err := hex.DecodeString(strings.TrimSpace(key))
+	if err != nil {
+		return nil, errors.New("clé non hex")
+	}
+	if len(raw) != 32 {
+		return nil, errors.New("clé invalide : 32 bytes (64 hex chars) requis")
+	}
+	block, err := aes.NewCipher(raw)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
 // initTokenAEAD lit COACH_TOKEN_KEY au premier appel. Idempotent.
 // Renvoie nil si la clé est définie et valide ; sinon une erreur claire.
 func initTokenAEAD() error {
@@ -125,28 +143,52 @@ func initTokenAEAD() error {
 			tokenAEADErr = errors.New("COACH_TOKEN_KEY non défini")
 			return
 		}
-		raw, err := hex.DecodeString(key)
+		gcm, err := newAEADFromHexKey(key)
 		if err != nil {
-			tokenAEADErr = errors.New("COACH_TOKEN_KEY n'est pas du hex valide")
-			return
-		}
-		if len(raw) != 32 {
-			tokenAEADErr = errors.New("COACH_TOKEN_KEY doit faire 32 bytes (64 hex chars)")
-			return
-		}
-		block, err := aes.NewCipher(raw)
-		if err != nil {
-			tokenAEADErr = err
-			return
-		}
-		gcm, err := cipher.NewGCM(block)
-		if err != nil {
-			tokenAEADErr = err
+			tokenAEADErr = errors.New("COACH_TOKEN_KEY : " + err.Error())
 			return
 		}
 		tokenAEAD = gcm
 	})
 	return tokenAEADErr
+}
+
+// encryptWithAEAD chiffre plain au format stocké "ENC:v1:…" avec un AEAD
+// arbitraire. Renvoie une erreur (pas de fallback cleartext — les appelants
+// qui veulent le mode dégradé passent par encryptToken).
+func encryptWithAEAD(a cipher.AEAD, plain string) (string, error) {
+	nonce := make([]byte, a.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	ct := a.Seal(nil, nonce, []byte(plain), nil)
+	out := make([]byte, 0, len(nonce)+len(ct))
+	out = append(out, nonce...)
+	out = append(out, ct...)
+	return encPrefix + base64.RawURLEncoding.EncodeToString(out), nil
+}
+
+// decryptWithAEAD déchiffre une valeur au format "ENC:v1:…" avec un AEAD
+// arbitraire. Contrairement à decryptToken, N'ACCEPTE PAS le plaintext :
+// l'appelant décide quoi faire d'une valeur non préfixée.
+func decryptWithAEAD(a cipher.AEAD, stored string) (string, error) {
+	if !strings.HasPrefix(stored, encPrefix) {
+		return "", errors.New("pas au format ENC")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(stored[len(encPrefix):])
+	if err != nil {
+		return "", errors.New("token format invalide (base64)")
+	}
+	ns := a.NonceSize()
+	if len(raw) < ns {
+		return "", errors.New("token format invalide (taille)")
+	}
+	nonce, ct := raw[:ns], raw[ns:]
+	pt, err := a.Open(nil, nonce, ct, nil)
+	if err != nil {
+		return "", errors.New("déchiffrement échoué (clé incorrecte ou data corrompu)")
+	}
+	return string(pt), nil
 }
 
 // encryptToken chiffre une chaîne et retourne le format stocké.
@@ -161,16 +203,12 @@ func encryptToken(plain string) string {
 		log.Printf("encryptToken: cleartext fallback (%v)", err)
 		return plain
 	}
-	nonce := make([]byte, tokenAEAD.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		log.Printf("encryptToken: rand: %v", err)
+	enc, err := encryptWithAEAD(tokenAEAD, plain)
+	if err != nil {
+		log.Printf("encryptToken: %v", err)
 		return plain
 	}
-	ct := tokenAEAD.Seal(nil, nonce, []byte(plain), nil)
-	out := make([]byte, 0, len(nonce)+len(ct))
-	out = append(out, nonce...)
-	out = append(out, ct...)
-	return encPrefix + base64.RawURLEncoding.EncodeToString(out)
+	return enc
 }
 
 // decryptToken déchiffre une chaîne stockée. Accepte aussi du plaintext
@@ -188,20 +226,7 @@ func decryptToken(stored string) (string, error) {
 	if err := initTokenAEAD(); err != nil {
 		return "", errors.New("token chiffré mais COACH_TOKEN_KEY indisponible : " + err.Error())
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(stored[len(encPrefix):])
-	if err != nil {
-		return "", errors.New("token format invalide (base64)")
-	}
-	ns := tokenAEAD.NonceSize()
-	if len(raw) < ns {
-		return "", errors.New("token format invalide (taille)")
-	}
-	nonce, ct := raw[:ns], raw[ns:]
-	pt, err := tokenAEAD.Open(nil, nonce, ct, nil)
-	if err != nil {
-		return "", errors.New("déchiffrement échoué (clé incorrecte ou data corrompu)")
-	}
-	return string(pt), nil
+	return decryptWithAEAD(tokenAEAD, stored)
 }
 
 // reencryptUserTokens parcourt les tokens d'un User et les ré-écrit

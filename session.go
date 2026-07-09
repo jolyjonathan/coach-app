@@ -81,13 +81,19 @@ func (st *SessionStore) Snapshot() map[string]Session {
 // Create mint une session de TTL standard et renvoie le sid opaque.
 func (st *SessionStore) Create(userID string) string {
 	id := randHex(32) // 256 bits
-	st.mu.Lock()
-	st.m[id] = Session{
+	s := Session{
 		UserID:    userID,
 		CreatedAt: time.Now(),
 		ExpiresAt: time.Now().Add(sessionTTL),
 	}
+	st.mu.Lock()
+	st.m[id] = s
 	st.mu.Unlock()
+	// Écriture ciblée synchrone : la session est durable en base AVANT que
+	// le cookie ne parte au client (avant : fenêtre de ~2 s du flusher).
+	if err := dbUpsertSession(id, s); err != nil {
+		log.Printf("session upsert (sql): %v", err)
+	}
 	return id
 }
 
@@ -152,19 +158,36 @@ func (st *SessionStore) Resolve(sid string) string {
 	now := time.Now()
 	if s.ExpiresAt.Before(now) {
 		st.Destroy(sid)
-		markSessionsDirty()
+		// Écriture ciblée async : purge de la ligne expirée, idempotent
+		// (le janitor repasserait derrière de toute façon).
+		go func() {
+			if err := dbDeleteSession(sid); err != nil {
+				log.Printf("session delete (sql): %v", err)
+			}
+		}()
 		return ""
 	}
 	half := sessionTTL / 2
 	if now.Sub(s.CreatedAt) > half && now.Sub(s.LastExtendedAt) > time.Hour {
+		var s2 Session
+		var extended bool
 		st.mu.Lock()
-		if s2, ok := st.m[sid]; ok {
-			s2.ExpiresAt = now.Add(sessionTTL)
-			s2.LastExtendedAt = now
-			st.m[sid] = s2
+		if cur, ok := st.m[sid]; ok {
+			cur.ExpiresAt = now.Add(sessionTTL)
+			cur.LastExtendedAt = now
+			st.m[sid] = cur
+			s2, extended = cur, true
 		}
 		st.mu.Unlock()
-		markSessionsDirty()
+		if extended {
+			// Async : throttlé à 1 prolongation/heure/session, hors chemin
+			// critique de la requête.
+			go func() {
+				if err := dbUpsertSession(sid, s2); err != nil {
+					log.Printf("session upsert (sql): %v", err)
+				}
+			}()
+		}
 	}
 	return s.UserID
 }
@@ -222,37 +245,45 @@ func saveSessions() {
 	}
 }
 
-// sessionJanitor periodically prunes expired sessions from memory and disk.
+// sessionJanitor periodically prunes expired sessions from memory and DB.
 func sessionJanitor() {
 	t := time.NewTicker(1 * time.Hour)
 	defer t.Stop()
 	for range t.C {
 		sessionStore.PurgeExpired()
-		saveSessions()
+		// Écriture ciblée : purge SQL des expirées au lieu du snapshot complet.
+		if err := dbDeleteExpiredSessions(); err != nil {
+			log.Printf("sessions janitor (sql): %v", err)
+		}
 	}
 }
 
-/* Wrappers historiques — l'API des call sites est inchangée. Audit
- * modularité (action 1) : les `go saveSessions()` fire-and-forget sont
- * remplacés par markSessionsDirty() — même garantie de durabilité
- * (asynchrone dans les deux cas) mais les écritures rapprochées sont
- * coalescées par le flusher de store.go au lieu de réécrire le fichier
- * une fois par mutation. */
+/* Wrappers historiques — l'API des call sites est inchangée.
+ *
+ * Plan P2 (écritures DB ciblées) : chaque mutation écrit SA ligne
+ * (UPSERT/DELETE unitaire, cf. sqlstore.go) au lieu de marquer le store
+ * dirty et de laisser le flusher réécrire TOUTE la table sessions. Le
+ * snapshot complet (saveSessions) ne sert plus qu'au shutdown. Bénéfices :
+ * une session créée est durable avant que le cookie ne parte, et le coût
+ * d'écriture ne croît plus avec le nombre de sessions actives. */
 
 func createSession(userID string) string {
-	id := sessionStore.Create(userID)
-	markSessionsDirty()
-	return id
+	// L'upsert SQL synchrone est fait dans Create (durabilité avant cookie).
+	return sessionStore.Create(userID)
 }
 
 func destroySession(id string) {
 	sessionStore.Destroy(id)
-	markSessionsDirty()
+	if err := dbDeleteSession(id); err != nil {
+		log.Printf("session delete (sql): %v", err)
+	}
 }
 
 func destroyAllSessionsFor(userID string) {
 	sessionStore.DestroyAllFor(userID)
-	markSessionsDirty()
+	if err := dbDeleteSessionsFor(userID); err != nil {
+		log.Printf("sessions delete-for (sql): %v", err)
+	}
 }
 
 func sessionID(r *http.Request) string {

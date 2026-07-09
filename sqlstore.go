@@ -304,6 +304,45 @@ func dbSaveAllSessions(m map[string]Session) error {
 	return tx.Commit()
 }
 
+/* ---------- sessions : écritures ciblées (plan P2, écritures DB ciblées) ----
+ * Les sessions sont la table la plus mutée (login, logout, sliding TTL,
+ * janitor). Le snapshot DELETE+INSERT complet (dbSaveAllSessions) reste
+ * utilisé au shutdown (ceinture-bretelles) et dans les tests, mais le chemin
+ * chaud passe par ces écritures unitaires : une ligne touchée par mutation
+ * au lieu de N réécrites. Toutes idempotentes. */
+
+// dbUpsertSession insère ou met à jour UNE session.
+func dbUpsertSession(sid string, s Session) error {
+	var ext any
+	if !s.LastExtendedAt.IsZero() {
+		ext = s.LastExtendedAt.UTC()
+	}
+	_, err := dbConn.Exec(
+		`INSERT INTO sessions (sid,user_id,created_at,expires_at,last_extended_at) VALUES (?,?,?,?,?)
+		 ON DUPLICATE KEY UPDATE expires_at=VALUES(expires_at), last_extended_at=VALUES(last_extended_at)`,
+		sid, s.UserID, s.CreatedAt.UTC(), s.ExpiresAt.UTC(), ext)
+	return err
+}
+
+// dbDeleteSession supprime UNE session (no-op si absente).
+func dbDeleteSession(sid string) error {
+	_, err := dbConn.Exec(`DELETE FROM sessions WHERE sid=?`, sid)
+	return err
+}
+
+// dbDeleteSessionsFor supprime toutes les sessions d'un utilisateur
+// (révocation admin, delete-account, change-password).
+func dbDeleteSessionsFor(userID string) error {
+	_, err := dbConn.Exec(`DELETE FROM sessions WHERE user_id=?`, userID)
+	return err
+}
+
+// dbDeleteExpiredSessions purge les sessions expirées (janitor horaire).
+func dbDeleteExpiredSessions() error {
+	_, err := dbConn.Exec(`DELETE FROM sessions WHERE expires_at < ?`, time.Now().UTC())
+	return err
+}
+
 // ---------- workouts (blob par utilisateur) ----------
 
 // loadWorkout renvoie le JSON brut des données workout (nil si absent).

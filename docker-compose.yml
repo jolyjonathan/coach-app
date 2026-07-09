@@ -105,8 +105,21 @@ services:
   # données sont persistées par le volume nommé `db_data`. Pas de `ports:`
   # exposé → joignable uniquement depuis le réseau interne du compose.
   db:
-    image: mariadb:lts            # LTS courante (épingle une version précise en prod, ex. mariadb:12.3)
+    # Épinglée par tag précis + digest (immuable — même posture supply-chain
+    # que le Dockerfile). Digest relevé le 2026-07-09. Mise à jour : changer
+    # le tag ET le digest ensemble, puis `docker compose up -d`.
+    image: mariadb:12.3.2@sha256:628f228f0fd5913a220438693576b29b6fe4dc1fa0a1298c0e98579fae28635f
     restart: unless-stopped
+    # Réglages adaptés à une instance self-hosted à faible concurrence :
+    # l'app n'ouvre qu'un pool → 50 connexions suffisent largement ;
+    # performance_schema OFF économise ~100 Mo de RAM ; buffer pool 128 Mo
+    # couvre des années d'historique multi-users (augmenter si la base
+    # dépasse ~1 Go).
+    command:
+      - --innodb-buffer-pool-size=128M
+      - --max-connections=50
+      - --performance-schema=OFF
+      - --skip-name-resolve
     environment:
       MARIADB_DATABASE:      coach
       MARIADB_USER:          coach
@@ -120,11 +133,75 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    # Borne la RAM totale de la stack : sans limite, MariaDB peut consommer
+    # bien au-delà du buffer pool sous charge.
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "5"
+
+  # =============================================================
+  # Backups automatiques MariaDB (dump quotidien + rétention)
+  # =============================================================
+  # Dump `mariadb-dump --single-transaction` chaque nuit à BACKUP_HOUR UTC
+  # (défaut 03h), rétention 7 quotidiens + 4 hebdomadaires, checksum sha256,
+  # chiffrement optionnel (BACKUP_PASSPHRASE dans .env). Joint aussi une
+  # archive des journaux d'audit (volume coach_data, monté en lecture seule).
+  #
+  #   Dump manuel immédiat : docker compose run --rm db-backup once
+  #   Restauration         : voir BACKUPS.md (arrêter coach-app d'abord !)
+  #
+  # ⚠️ Les dumps restent SUR LA MÊME MACHINE (volume db_backups). Pour une
+  # vraie résilience, synchroniser ce volume vers un stockage externe
+  # (rclone/restic/rsync) — exemple dans BACKUPS.md.
+  db-backup:
+    image: mariadb:12.3.2@sha256:628f228f0fd5913a220438693576b29b6fe4dc1fa0a1298c0e98579fae28635f
+    restart: unless-stopped
+    entrypoint: ["bash", "/scripts/db-backup.sh"]
+    command: ["daemon"]
+    environment:
+      DB_HOST:           db
+      DB_NAME:           coach
+      DB_USER:           coach
+      DB_PASSWORD:       "${DB_PASSWORD:?missing in .env}"
+      BACKUP_HOUR:       ${BACKUP_HOUR:-03}
+      RETENTION_DAILY:   ${RETENTION_DAILY:-7}
+      RETENTION_WEEKLY:  ${RETENTION_WEEKLY:-4}
+      BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE:-}
+    volumes:
+      - ./scripts/db-backup.sh:/scripts/db-backup.sh:ro
+      - db_backups:/backups
+      - coach_data:/coach-data:ro
+    healthcheck:
+      # Rouge si le dernier dump réussi date de plus de 26 h.
+      test: ["CMD", "bash", "/scripts/db-backup.sh", "check"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 2m
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   coach_data:
@@ -138,3 +215,12 @@ volumes:
   db_data:
     # Persiste la base MariaDB. NE PAS supprimer (`down -v`) tant que la
     # migration n'est pas validée — sinon la base repart vierge.
+  db_backups:
+    # Dumps quotidiens du service db-backup. Pour les écrire directement
+    # sur un chemin du host (plus simple à synchroniser hors-machine) :
+    #   db_backups:
+    #     driver: local
+    #     driver_opts:
+    #       type: none
+    #       o: bind
+    #       device: /var/lib/coach-app/backups

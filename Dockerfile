@@ -12,23 +12,15 @@
 # =============================================================
 
 # ---------- Builder stage ----------
-# Audit M-01 : tags `golang:1.22-alpine` et `distroless/static-debian12:nonroot`
-# sont mutables → un registry compromis peut servir une image trojanisée sans
-# que le build s'en rende compte.
+# Audit M-01 : images épinglées par TAG PRÉCIS + DIGEST SHA256 (immuable).
+# Un registry compromis ne peut plus servir une image trojanisée : le digest
+# ne matcherait pas. Digests relevés le 2026-07-09 (manifest list multi-arch).
 #
-# Pour une posture supply-chain solide, remplacer ces lignes par un digest
-# SHA256 :
-#   FROM golang:1.22-alpine@sha256:<DIGEST> AS builder
-#   FROM gcr.io/distroless/static-debian12:nonroot@sha256:<DIGEST>
-#
-# Récupération du digest courant :
-#   docker pull golang:1.22-alpine
-#   docker inspect --format='{{index .RepoDigests 0}}' golang:1.22-alpine
-#
-# Procédure recommandée : `make pin-images` (cf. scripts/pin-images.sh) une
-# fois par mois ou avant chaque release. Les digests vivent en commit signé,
-# pas dans le runtime.
-FROM golang:1.22-alpine AS builder
+# Mise à jour des digests (une fois par mois ou avant release) :
+#   docker pull golang:1.26-alpine
+#   docker inspect --format='{{index .RepoDigests 0}}' golang:1.26-alpine
+# ou : scripts/pin-images.sh
+FROM golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder
 WORKDIR /src
 
 # Cache les modules avant le source (couches Docker réutilisables).
@@ -57,7 +49,7 @@ RUN mkdir -p /out/datadir
 # ---------- Runtime stage ----------
 # distroless/static : pas de shell, pas de libc, juste de quoi exécuter
 # un binaire statique. UID 65532 par défaut (nonroot).
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:b7bb25d9f7c31d2bdd1982feb4dafcaf137703c7075dbe2febb41c24212b946f
 
 WORKDIR /app
 COPY --from=builder /out/coach-app /app/coach-app

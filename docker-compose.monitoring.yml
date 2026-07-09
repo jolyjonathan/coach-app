@@ -1,0 +1,55 @@
+# =============================================================
+# Coach Adaptatif — docker-compose.monitoring.yml (OPTIONNEL)
+# =============================================================
+# Supervision self-hosted : Uptime Kuma. À lancer EN PLUS du compose
+# principal, sur la même machine ou (mieux) sur une autre :
+#
+#   docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+#
+# Setup (2 minutes, une fois) :
+#   1. Ouvrir http://<host>:3001 → créer le compte admin Kuma.
+#   2. Ajouter les sondes :
+#      - HTTP(s)  : http://coach-app:8080/healthz   (intervalle 60 s)
+#        → sur le réseau compose, le nom de service résout directement.
+#        Si Kuma tourne ailleurs : https://<domaine>/healthz
+#      - Docker   : conteneur db-backup — son healthcheck passe unhealthy
+#        si le dernier dump a plus de 26 h (voir BACKUPS.md).
+#   3. Notifications : ntfy, e-mail, webhook, Telegram… (natif Kuma).
+#
+# Alertes minimales recommandées : app down, backup en retard, et une
+# sonde disque sur le host (node_exporter ou un simple cron `df`).
+#
+# Alternative si tu as déjà Prometheus/Grafana : l'app expose
+# GET /api/admin/metrics au format Prometheus (auth admin requise).
+# =============================================================
+
+services:
+  uptime-kuma:
+    # Épinglée tag + digest (2026-07-09).
+    image: louislam/uptime-kuma:2.4.0@sha256:91e963bfda569ba115206e843febb446f473ab525add4e08b2b9e3beffa16985
+    container_name: coach-kuma
+    restart: unless-stopped
+    ports:
+      # Interface web Kuma. Restreindre à localhost si reverse proxy :
+      #   127.0.0.1:3001:3001
+      - "${KUMA_PORT:-3001}:3001"
+    volumes:
+      - kuma_data:/app/data
+      # Optionnel — sonde "Docker container" (état healthy/unhealthy de
+      # db-backup et coach-app). Lecture seule du socket. Commenter si tu
+      # préfères ne pas exposer le socket Docker à Kuma.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  kuma_data:

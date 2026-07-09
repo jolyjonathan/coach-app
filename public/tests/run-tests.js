@@ -123,7 +123,7 @@ try {
 // modularité) — scripts classiques à portée globale partagée, chargés AVANT
 // app.js exactement comme dans index.html.
 for (const mod of ['i18n.js', 'core.js', 'exercises-data.js', 'gamification.js',
-                   'banister.js', 'bayesian.js', 'cycle.js']) {
+                   'banister.js', 'bayesian.js', 'cycle.js', 'blockreview.js']) {
   try {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', mod), 'utf8'),
       sandbox, { filename: mod });
@@ -1027,6 +1027,103 @@ test('Cycle.estimateCycleLength: médiane des intervalles', () => {
 });
 test('Cycle.cycleDay: pas de données → null', () => {
   eq(Cyc.cycleDay({ enabled: true, periods: [] }), null);
+});
+
+// ===================== Bilan de fin de bloc (BlockReview) =====================
+const BR = ctx.BlockReview;
+truthy(BR, 'BlockReview module must be loaded');
+
+test('BlockReview.pearson: corrélation parfaite → 1', () => {
+  const r = BR.pearson([1, 2, 3, 4, 5], [2, 4, 6, 8, 10]);
+  truthy(Math.abs(r - 1) < 1e-9, 'r=' + r);
+});
+test('BlockReview.pearson: anti-corrélation → -1', () => {
+  const r = BR.pearson([1, 2, 3, 4, 5], [10, 8, 6, 4, 2]);
+  truthy(Math.abs(r + 1) < 1e-9, 'r=' + r);
+});
+test('BlockReview.pearson: n<5 ou variance nulle → null', () => {
+  eq(BR.pearson([1, 2], [3, 4]), null);
+  eq(BR.pearson([1, 1, 1, 1, 1], [1, 2, 3, 4, 5]), null);
+});
+
+test('BlockReview.setsByZone: fenêtre + primaire/secondaire', () => {
+  const lib = { squat: { z: ['quads', 'glutes'] } };
+  const day = (n) => new Date(Date.parse('2026-06-01') + n * 86400000).toISOString();
+  const hist = [
+    { date: day(1), sets: [{ exoId: 'squat', reps: 5, weight: 100 }, { exoId: 'squat', reps: 5, weight: 100 }] },
+    { date: day(60), sets: [{ exoId: 'squat', reps: 5, weight: 100 }] }, // hors fenêtre
+    { date: day(2), kind: 'external', sets: [{ exoId: 'squat', reps: 5, weight: 100 }] }, // exclu
+  ];
+  const z = BR.setsByZone(hist, Date.parse('2026-06-01'), Date.parse('2026-06-15'), lib);
+  eq(z.quads, 2);   // zone primaire ×1.0
+  eq(z.glutes, 1);  // zone secondaire ×0.5
+});
+
+test('BlockReview.compute: null sans macrocycle ou trop tôt', () => {
+  eq(BR.compute({ history: [], macrocycle: null }), null);
+  const now = Date.parse('2026-06-05');
+  eq(BR.compute({
+    history: [], physio: [],
+    macrocycle: { startDate: '2026-06-01' }, now,
+    models: { Banister: ctx.Banister, Bayesian: ctx.Bayesian, Programming: { pickKeyLifts: () => [] } },
+  }), null, 'bloc 1 à J4 → trop tôt, pas de bloc précédent');
+});
+
+test('BlockReview.compute: synthèse d\'un bloc avec progression', () => {
+  const start = Date.parse('2026-05-01');
+  const now = start + 41 * 86400000; // fin de bloc 1
+  const hist = [];
+  // 3 séances/sem, squat qui progresse de 100 → 112 kg (5 reps).
+  for (let d = 0; d < 42; d += 2) {
+    hist.push({
+      date: new Date(start + d * 86400000).toISOString(),
+      sets: [{ exoId: 'squat', reps: 5, weight: 100 + d * 0.3, rpe: 7.5 }],
+      rpe: 7.5,
+    });
+  }
+  const physio = [];
+  for (let d = 0; d < 42; d += 3) {
+    physio.push({ date: new Date(start + d * 86400000).toISOString().slice(0, 10), hrv: 50 + (d % 10) });
+  }
+  const rev = BR.compute({
+    history: hist, physio,
+    macrocycle: { startDate: '2026-05-01', focus: 'force' }, now,
+    models: {
+      Banister: ctx.Banister, Bayesian: ctx.Bayesian,
+      Programming: { pickKeyLifts: () => ['squat'] },
+    },
+    exoLib: { squat: { z: ['quads', 'glutes'] } },
+  });
+  truthy(rev, 'review attendue');
+  eq(rev.blockIdx, 1);
+  truthy(rev.adherence.sessions >= 20, 'sessions=' + rev.adherence.sessions);
+  truthy(rev.adherence.perWeek > 3 && rev.adherence.perWeek < 4, 'perWeek=' + rev.adherence.perWeek);
+  truthy(rev.lifts.length === 1 && rev.lifts[0].exoId === 'squat');
+  truthy(rev.lifts[0].end && rev.lifts[0].end.mu > 100, '1RM fin de bloc > 100');
+  truthy(rev.banister.ctlEnd > rev.banister.ctlStart, 'CTL doit monter sur un bloc chargé');
+  truthy(rev.next && rev.next.why && rev.next.why.length > 20, 'recommandation motivée');
+  truthy(rev.volume.setsByZone.quads > 0, 'volume quads compté');
+});
+
+test('BlockReview.compute: début de bloc N+1 → bilan du bloc précédent complet', () => {
+  const start = Date.parse('2026-05-01');
+  const now = start + (42 + 3) * 86400000; // J3 du bloc 2
+  const hist = [{
+    date: new Date(start + 10 * 86400000).toISOString(),
+    sets: [{ exoId: 'squat', reps: 5, weight: 100, rpe: 7 }], rpe: 7,
+  }];
+  const rev = BR.compute({
+    history: hist, physio: [],
+    macrocycle: { startDate: '2026-05-01' }, now,
+    models: {
+      Banister: ctx.Banister, Bayesian: ctx.Bayesian,
+      Programming: { pickKeyLifts: () => [] },
+    },
+    exoLib: {},
+  });
+  truthy(rev, 'review attendue');
+  eq(rev.blockIdx, 1, 'doit porter sur le bloc 1 (complet), pas le bloc 2 entamé');
+  truthy(rev.completed, 'bloc 1 marqué complet');
 });
 
 // ============================= Summary =============================

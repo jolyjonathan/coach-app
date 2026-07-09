@@ -70,6 +70,26 @@ Sévérité indicative :
 - Garder `COACH_TOKEN_KEY` secret. La perdre rend les tokens API
   chiffrés (Strava, Oura, etc.) illisibles, mais la divulguer permet
   de les déchiffrer.
+
+### Rotation de `COACH_TOKEN_KEY`
+
+En cas de fuite (ou par hygiène périodique), la sous-commande
+`--rotate-key` ré-encrypte tous les secrets at-rest (TOTP + tokens API)
+de l'ancienne clé vers la nouvelle, en une transaction, tout-ou-rien :
+
+```bash
+docker compose stop coach-app          # l'app doit être arrêtée
+docker compose run --rm \
+  -e COACH_TOKEN_KEY_OLD="<ancienne clé>" \
+  -e COACH_TOKEN_KEY="$(openssl rand -hex 32)" \
+  coach-app --rotate-key
+# → noter la nouvelle clé affichée dans la commande ci-dessus,
+#   la reporter dans .env (COACH_TOKEN_KEY=…)
+docker compose up -d coach-app
+```
+
+Idempotent (re-run sans danger). Faire un backup avant
+(`docker compose run --rm db-backup once`).
 - Garder `COACH_2FA_REQUIRED=1` (défaut) en production.
 - Garder `COACH_ALLOW_REGISTRATION=0` (défaut) sauf usage explicitement
   public.

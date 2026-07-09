@@ -14,6 +14,9 @@
 *.key
 *.pem
 
+# --- Backups d'éditeur (*.go.<digits>) ---
+*.go.[0-9]*
+
 # --- Binaires Go ---
 /coach
 /coach-app

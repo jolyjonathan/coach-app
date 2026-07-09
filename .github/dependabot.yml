@@ -38,3 +38,15 @@ updates:
       - "docker"
     commit-message:
       prefix: "chore(docker)"
+
+  # Dépendances des tests e2e (Playwright)
+  - package-ecosystem: "npm"
+    directory: "/e2e"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+      - "e2e"
+    commit-message:
+      prefix: "chore(e2e)"

@@ -5283,12 +5283,83 @@ function openInsights() {
   }
 }
 
+// renderBlockReviewCard — carte HTML du bilan de bloc (BlockReview.compute).
+// Pure présentation : toute la synthèse (adhérence, deltas Kalman, Banister,
+// corrélation TSB↔HRV, recommandation motivée) vient de blockreview.js.
+function renderBlockReviewCard(rev) {
+  const liftName = (id) => {
+    const e = window.EX_BY_ID && window.EX_BY_ID[id];
+    return e ? (e.name || id) : id;
+  };
+  const liftRows = rev.lifts.filter(l => l.end).map(l => {
+    const delta = l.deltaKg == null ? '—'
+      : `${l.deltaKg > 0 ? '+' : ''}${l.deltaKg} kg`;
+    const deltaColor = l.deltaKg == null ? 'var(--mut)'
+      : l.deltaKg > 0 ? 'var(--ok, #3ddc84)' : l.deltaKg < 0 ? 'var(--danger, #ff5c7c)' : 'var(--mut)';
+    const driftBadge = l.drift && l.drift.drifting
+      ? ` <span style="color:var(--danger, #ff5c7c);font-size:10px">▼ drift</span>` : '';
+    return `<tr>
+      <td>${escapeHtml(liftName(l.exoId))}${driftBadge}</td>
+      <td style="font-variant-numeric:tabular-nums">${l.end.mu.toFixed(1)} ±${l.end.sigma.toFixed(1)} kg</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;color:${deltaColor}">${delta}</td>
+    </tr>`;
+  }).join('');
+  const corr = rev.tsbHrvCorr;
+  return `
+    <div class="card">
+      <h2>📋 Bilan du bloc ${rev.blockIdx}${rev.completed ? '' : ' (en cours)'}</h2>
+      <p class="mut" style="font-size:12px;margin:-4px 0 12px">
+        ${rev.startDate} → ${rev.endDate} · cycle Issurin 6 sem · synthèse des modèles (Kalman, Banister, RP).
+      </p>
+      <div style="display:flex;gap:20px;align-items:baseline;flex-wrap:wrap">
+        <div>
+          <div class="stat">${rev.adherence.perWeek}</div>
+          <div class="mut" style="font-size:11px">séances/sem (${rev.adherence.sessions} au total)</div>
+        </div>
+        <div>
+          <div class="stat">${rev.banister.ctlDelta > 0 ? '+' : ''}${rev.banister.ctlDelta}</div>
+          <div class="mut" style="font-size:11px">CTL (forme long terme) sur le bloc</div>
+        </div>
+        ${corr ? `
+        <div>
+          <div class="stat">${(corr.r > 0 ? '+' : '') + corr.r.toFixed(2)}</div>
+          <div class="mut" style="font-size:11px">corrélation TSB↔HRV (${corr.n} j — Plews 2013)</div>
+        </div>` : ''}
+      </div>
+      ${liftRows ? `
+      <table style="width:100%;margin-top:12px;font-size:12px">
+        <thead><tr class="mut"><th style="text-align:left">Key lift</th><th style="text-align:left">1RM estimé (90 % IC)</th><th style="text-align:right">Δ bloc</th></tr></thead>
+        <tbody>${liftRows}</tbody>
+      </table>` : ''}
+      <p class="mut" style="font-size:11px;margin-top:12px">
+        ${rev.next.action === 'deload' ? '⚠️' : rev.next.action === 'reduce-volume' ? '📉' : '✓'}
+        ${escapeHtml(rev.next.why)}
+      </p>
+    </div>
+  `;
+}
+
 function renderInsights() {
   const box = document.getElementById('insightsBody');
   if (!box || !window.Science) return;
   ensureBodyState();
   const Sci = window.Science;
   const cards = [];
+
+  // --- 0. Bilan de fin de bloc (Issurin) — blockreview.js -----------
+  // Ne doit JAMAIS casser les autres insights : try/catch défensif.
+  if (S.macrocycle && window.BlockReview) {
+    try {
+      const rev = window.BlockReview.compute({
+        history: S.history,
+        physio: (S.body && S.body.physio) || [],
+        macrocycle: S.macrocycle,
+      });
+      if (rev) cards.push(renderBlockReviewCard(rev));
+    } catch (e) {
+      console.warn('blockreview:', e);
+    }
+  }
 
   // --- 1. NEAT (Levine 2005) ----------------------------------------
   const neat = Sci.neatTrend(S.body.lifestyle);
