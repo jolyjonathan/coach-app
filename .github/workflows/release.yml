@@ -1,0 +1,96 @@
+# =============================================================
+# CI/CD coach-app — à copier dans coach-app/.github/workflows/release.yml
+# =============================================================
+# Flux de déploiement :
+#   push main        → tests + build + scan → GHCR sha-<commit> → tag STAGING mis à jour dans jjoly-infra
+#   tag git vX.Y.Z   → idem → tag PROD mis à jour dans jjoly-infra
+# Flux applique ensuite tout seul (~1 min). Rollback = git revert dans jjoly-infra.
+#
+# Prérequis :
+#   - secret INFRA_REPO_TOKEN : PAT fine-grained, permission Contents:write sur jolyjonathan/jjoly-infra
+#   - remplacer jolyjonathan partout
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+
+env:
+  IMAGE: ghcr.io/jolyjonathan/coach-app
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: go vet ./...
+      - run: go test ./...
+
+  build-push:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: meta
+        name: Déterminer le tag d'image
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
+
+      - name: Scan vulnérabilités (bloquant sur CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+  deploy:
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout jjoly-infra
+        uses: actions/checkout@v4
+        with:
+          repository: jolyjonathan/jjoly-infra
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+
+      - name: Mettre à jour le tag d'image (staging sur main, prod sur tag)
+        run: |
+          TAG="${{ needs.build-push.outputs.tag }}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TARGET=apps/coach/prod/kustomization.yaml
+          else
+            TARGET=apps/coach/staging/kustomization.yaml
+          fi
+          sed -i "/# ci-managed/s|newTag: [^ ]*|newTag: $TAG|" "$TARGET"
+          git config user.name  "ci-bot"
+          git config user.email "ci@jjoly.eu"
+          git add "$TARGET"
+          git commit -m "deploy(coach): $TAG → $(basename $(dirname $TARGET))" || echo "rien à committer"
+          git push
