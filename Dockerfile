@@ -49,7 +49,7 @@ RUN mkdir -p /out/datadir
 # ---------- Runtime stage ----------
 # distroless/static : pas de shell, pas de libc, juste de quoi exécuter
 # un binaire statique. UID 65532 par défaut (nonroot).
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:b7bb25d9f7c31d2bdd1982feb4dafcaf137703c7075dbe2febb41c24212b946f
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:aef9602f8710ec12bde19d593fed1f76c708531bb7aba205110f1029786ead7b
 
 WORKDIR /app
 COPY --from=builder /out/coach-app /app/coach-app
