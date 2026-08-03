@@ -167,6 +167,16 @@ func main() {
 		rateLimit("strava_oauth", 20, 5*time.Minute, handleStravaAuthCallback))
 	mux.HandleFunc("/api/strava/webhook",
 		rateLimit("strava_webhook", 600, 1*time.Hour, handleStravaWebhook))
+	// Émission vers Frigo Adaptatif (voir fridge.go).
+	mux.HandleFunc("GET /api/physio/integrations/fridge",
+		rateLimit("physio_set", 60, 5*time.Minute, requireAuth(require2FA(handleFridgeStatus))))
+	mux.HandleFunc("POST /api/physio/integrations/fridge",
+		rateLimit("physio_set", 20, 5*time.Minute, requireAuth(require2FA(handleFridgeSet))))
+	mux.HandleFunc("DELETE /api/physio/integrations/fridge",
+		rateLimit("physio_set", 20, 5*time.Minute, requireAuth(require2FA(handleFridgeRemove))))
+	mux.HandleFunc("POST /api/physio/integrations/fridge/sync",
+		rateLimit("physio_sync", 30, 1*time.Hour, requireAuth(require2FA(handleFridgeSync))))
+
 	mux.HandleFunc("DELETE /api/physio/integrations/strava",
 		rateLimit("physio_set", 20, 5*time.Minute, requireAuth(require2FA(handleStravaDisconnect))))
 	mux.HandleFunc("POST /api/physio/integrations/strava/sync",

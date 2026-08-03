@@ -26,12 +26,44 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # MariaDB obligatoire, comme dans ci.yml.
+    #
+    # Sans ce service, TestMain (testhelpers_test.go) sort immédiatement faute
+    # de COACH_DB : `go test ./...` affiche « ok » et rend 0 sans avoir exécuté
+    # un seul test. Le job passait donc au vert quoi qu'il arrive, et
+    # build-push s'exécutait derrière un garde-fou qui ne gardait rien — une
+    # image pouvait être publiée en production sans qu'aucun test ait tourné.
+    services:
+      mariadb:
+        image: mariadb:12.3.2@sha256:628f228f0fd5913a220438693576b29b6fe4dc1fa0a1298c0e98579fae28635f
+        env:
+          MARIADB_DATABASE: coach_test
+          MARIADB_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s --health-timeout=5s --health-retries=10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: { go-version-file: go.mod }
       - run: go vet ./...
-      - run: go test ./...
+
+      # Garde-fou contre la régression silencieuse : si TestMain se remettait à
+      # sortir sans rien exécuter, le compte de tests tomberait à zéro et ce
+      # pas échouerait, au lieu de laisser passer un « ok » trompeur.
+      - name: Vérifier que les tests s'exécutent réellement
+        env:
+          COACH_DB: "root:root@tcp(127.0.0.1:3306)/coach_test?parseTime=true&loc=UTC&charset=utf8mb4"
+        run: |
+          go test -v ./... 2>&1 | tee /tmp/sortie.txt
+          n=$(grep -c '^--- PASS' /tmp/sortie.txt || true)
+          echo "$n test(s) exécuté(s)"
+          if [ "$n" -lt 20 ]; then
+            echo "::error::Seulement $n test(s) exécuté(s) — la suite ne tourne pas vraiment."
+            exit 1
+          fi
 
   build-push:
     needs: test

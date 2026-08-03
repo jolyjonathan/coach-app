@@ -68,6 +68,15 @@ type User struct {
 	// to the client so the UI can show "synced X min ago".
 	PhysioLastSync map[string]time.Time `json:"physioLastSync,omitempty"`
 
+	// FridgePushURL : URL de réception de Frigo Adaptatif, collée par
+	// l'utilisateur depuis l'onglet Santé du frigo. Elle contient un secret
+	// dans son chemin et vaut donc justificatif d'accès en écriture — d'où
+	// son omission de toute réponse d'API (seul l'hôte est renvoyé).
+	//
+	// Elle est APPELÉE par ce serveur : voir urlFrigoValide et clientFrigo
+	// dans fridge.go pour les garde-fous contre la falsification de requête.
+	FridgePushURL string `json:"fridgePushURL,omitempty"`
+
 	// RecoveryCodes : codes de secours 2FA (à usage unique). Générés à
 	// l'enrôlement TOTP, ils permettent de se connecter si l'utilisateur
 	// perd son téléphone — sans eux, perdre l'authenticator = perdre l'accès

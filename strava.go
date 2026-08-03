@@ -695,6 +695,28 @@ func stravaIngestActivity(uid string, activityID int64) error {
 // (premier sync après connexion). Pagination : on prend la première page
 // (jusqu'à 200 activités).
 func stravaFetchRecentActivities(uid string, days int) ([]PhysioEntry, error) {
+	acts, err := stravaFetchActivitesBrutes(uid, days)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PhysioEntry, 0, len(acts))
+	for i := range acts {
+		e := stravaActivityToPhysio(&acts[i])
+		if e.Date == "" {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// stravaFetchActivitesBrutes renvoie les activités SANS les réduire à des
+// PhysioEntry.
+//
+// Extrait de stravaFetchRecentActivities parce que la conversion perd le type
+// de sport et la durée — deux informations dont Frigo Adaptatif a besoin pour
+// enregistrer une séance et détecter les doublons avec une saisie manuelle.
+func stravaFetchActivitesBrutes(uid string, days int) ([]stravaActivity, error) {
 	creds, err := stravaLoadCreds(uid)
 	if err != nil {
 		return nil, err
@@ -719,15 +741,7 @@ func stravaFetchRecentActivities(uid string, days int) ([]PhysioEntry, error) {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&acts); err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
 	}
-	out := make([]PhysioEntry, 0, len(acts))
-	for i := range acts {
-		e := stravaActivityToPhysio(&acts[i])
-		if e.Date == "" {
-			continue
-		}
-		out = append(out, e)
-	}
-	return out, nil
+	return acts, nil
 }
 
 // stravaActivityToPhysio extrait ce qui rentre dans notre PhysioEntry.

@@ -72,6 +72,19 @@ type PhysioEntry struct {
 	BodyFatPct   float64 `json:"bodyFatPct,omitempty"`   // 0-100
 	RespRate     float64 `json:"respRate,omitempty"`     // breaths/min nuit
 	MindfulMin   float64 `json:"mindfulMin,omitempty"`   // minutes méditation
+
+	// Apport alimentaire, poussé par Frigo Adaptatif (voir SYNCHRO-COACH.md
+	// côté frigo). Ces champs n'arrivent QUE si l'utilisateur a effectivement
+	// déclaré ce qu'il a mangé : le frigo n'envoie jamais un apport déduit de
+	// son planning prévisionnel. IntakeBasis le dit explicitement — « reel »
+	// aujourd'hui, et rien d'autre n'est accepté comme mesure.
+	//
+	// Utilité pour les modèles : une séance dure enchaînée sur un déficit
+	// n'a pas le même coût qu'une séance nourrie, et la charge seule ne peut
+	// pas le savoir.
+	KcalIntake  float64 `json:"kcalIntake,omitempty"`  // kcal ingérées
+	ProteinG    float64 `json:"proteinG,omitempty"`    // protéines, grammes
+	IntakeBasis string  `json:"intakeBasis,omitempty"` // "reel" uniquement
 }
 
 // fetchOuraSleep récupère les périodes de sommeil sur la fenêtre [start, end].
@@ -916,10 +929,14 @@ func handlePhysioWebhook(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		// Au moins un champ non-nul attendu.
+		// KcalIntake fait partie du test : sans lui, une journée où
+		// l'utilisateur a déclaré ses repas mais ne s'est ni pesé ni mesuré
+		// serait rejetée en silence, et le frigo croirait avoir transmis.
 		if e.HRV <= 0 && e.Sleep <= 0 && e.RHR <= 0 &&
 			e.ActiveEnergy <= 0 && e.VO2Max <= 0 && e.Steps <= 0 &&
 			e.AvgHR <= 0 && e.BodyMassKg <= 0 && e.BodyFatPct <= 0 &&
-			e.RespRate <= 0 && e.MindfulMin <= 0 {
+			e.RespRate <= 0 && e.MindfulMin <= 0 &&
+			e.KcalIntake <= 0 && e.ProteinG <= 0 {
 			continue
 		}
 		clean = append(clean, e)
@@ -1023,6 +1040,16 @@ func mergePhysioIntoData(uid string, incoming []PhysioEntry) error {
 		}
 		if e.MindfulMin > 0 {
 			entry["mindfulMin"] = e.MindfulMin
+		}
+		// Apport : on ne persiste QUE ce qui est déclaré réel. Un apport
+		// estimé serait indiscernable d'une mesure une fois écrit ici, et
+		// c'est précisément la confusion que le frigo a corrigée de son côté.
+		if e.KcalIntake > 0 && e.IntakeBasis == "reel" {
+			entry["kcalIntake"] = e.KcalIntake
+			if e.ProteinG > 0 {
+				entry["proteinG"] = e.ProteinG
+			}
+			entry["intakeBasis"] = "reel"
 		}
 		byDate[e.Date] = entry
 	}
