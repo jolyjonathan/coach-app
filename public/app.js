@@ -2006,6 +2006,18 @@ const PROVIDERS = [
     syncFn: 'physioSyncNow',
   },
   {
+    // Frigo Adaptatif est le seul provider SORTANT : on ne reçoit rien de lui
+    // ici, on lui envoie les séances et la dépense. Le sens inverse (poids,
+    // sommeil, apport) passe par le webhook physio générique — c'est le frigo
+    // qui l'appelle, coach n'a rien à configurer pour ça.
+    id: 'fridge', name: 'Frigo Adaptatif', kind: 'outbound',
+    icon: '🧊', brandColor: '#5DD4A4', bg: '#1a2b25', fg: '#5DD4A4',
+    description: "Envoie tes séances et ta dépense vers le frigo, pour qu'il "
+      + "dimensionne les portions sur ton activité réelle. Colle ici l'URL de "
+      + "réception générée dans son onglet Santé.",
+    docUrl: 'https://fridge.jjoly.eu',
+  },
+  {
     id: 'applehealth', name: 'Apple Health', kind: 'webhook',
     icon: '', brandColor: '#000', bg: '#000', fg: '#fff', appleStyle: true,
     description: 'iPhone / Apple Watch via un Raccourci iOS gratuit. Configuration une fois, push quotidien automatique.',
@@ -2044,6 +2056,9 @@ function physioProviderCard(p, status, webhookUrl) {
   } else if (isWebhookProvider) {
     badgeText = 'Via webhook';
     badgeColor = 'var(--blue,#7BA1FF)';
+  } else if (p.kind === 'outbound') {
+    badgeText = (status && status.configure) ? '✓ Lié' : 'Non lié';
+    badgeColor = (status && status.configure) ? 'var(--success,#5DD4A4)' : 'var(--mut)';
   } else if (isSoon) {
     badgeText = 'Bientôt';
     badgeColor = 'var(--mut)';
@@ -2120,6 +2135,36 @@ function physioProviderCard(p, status, webhookUrl) {
                      justify-content:center">
         ${iconSvg}<span>Configurer ${escapeHtml(p.name)}</span>
       </button>`;
+  } else if (p.kind === 'outbound') {
+    // Deux états : non configuré (champ de saisie) ou configuré (hôte + actions).
+    // L'URL complète n'est jamais réaffichée : elle contient un secret, et la
+    // rappeler à l'écran multiplie les occasions de la voir fuiter dans une
+    // capture. Seul l'hôte suffit à vérifier qu'on parle au bon frigo.
+    if (status && status.configure) {
+      actionHtml = `
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">
+          <button type="button" data-action="fridge-sync" class="sec"
+                  style="font-size:12px;padding:4px 10px;flex:1">⟲ Envoyer maintenant</button>
+          <button type="button" data-action="fridge-remove" class="sec"
+                  style="font-size:11px;padding:4px 8px;color:var(--mut)">déconnecter</button>
+        </div>
+        <div class="mut" style="font-size:11px">Envoi vers <strong>${escapeHtml(status.hote || '')}</strong></div>`;
+    } else {
+      actionHtml = `
+        <input type="url" data-fridge-url placeholder="https://fridge.jjoly.eu/api/coach/push/…"
+               autocomplete="off" spellcheck="false"
+               style="width:100%;padding:8px 10px;font-size:12px;margin-bottom:6px;
+                      background:var(--bg);color:inherit;border:1px solid var(--line);
+                      border-radius:6px;font-family:ui-monospace,Menlo,monospace">
+        <button type="button" data-action="fridge-save" class="provider-connect-btn"
+                style="display:flex;align-items:center;gap:10px;padding:10px 14px;
+                       background:${escapeHtml(p.bg)};color:${escapeHtml(p.fg)};
+                       border:1px solid var(--line);border-radius:6px;
+                       font-size:13px;font-weight:500;cursor:pointer;width:100%;
+                       justify-content:center">
+          ${iconSvg}<span>Enregistrer le lien</span>
+        </button>`;
+    }
   } else if (isSoon) {
     actionHtml = `
       <button type="button" disabled aria-disabled="true"
@@ -2172,9 +2217,15 @@ async function physioRender() {
   const wh = integ.webhook || { enabled: false };
   const webhookUrl = wh.enabled ? (origin + wh.path) : '';
 
+  // Le statut du frigo vit sur son propre endpoint : c'est une intégration
+  // sortante, elle n'a pas sa place dans la map des connecteurs entrants.
+  let fridgeStatus = { configure: false };
+  try { fridgeStatus = await api('GET', '/api/physio/integrations/fridge'); } catch (e) { /* hors ligne */ }
+
   const cards = PROVIDERS.map(p => {
     let status = null;
     if (p.id === 'webhook') status = wh;
+    else if (p.id === 'fridge') status = fridgeStatus;
     else if (p.connector) status = integ[p.connector] || { enabled: false };
     return physioProviderCard(p, status, webhookUrl);
   }).join('');
@@ -2222,6 +2273,17 @@ function physioCardActionDelegate(ev) {
       if (code) physioCopyWebhookUrl(code.textContent);
       break;
     }
+    case 'fridge-save': {
+      const input = ev.target.closest('.provider-card').querySelector('[data-fridge-url]');
+      physioFridgeSave(input ? input.value : '');
+      break;
+    }
+    case 'fridge-sync':
+      physioFridgeSync();
+      break;
+    case 'fridge-remove':
+      physioFridgeRemove();
+      break;
     case 'webhook-rotate':
       physioWebhookRotate();
       break;
@@ -8670,4 +8732,48 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js', { scope: '/' })
       .catch((err) => console.warn('SW registration failed:', err));
   });
+}
+
+/* ---------------------------------------------------------------------------
+ * Frigo Adaptatif — intégration sortante.
+ * Voir fridge.go pour les garde-fous serveur (validation d'URL, refus des
+ * redirections) : le contrôle côté navigateur n'est qu'un confort de saisie,
+ * il ne protège rien.
+ * ------------------------------------------------------------------------- */
+
+async function physioFridgeSave(url) {
+  const v = (url || '').trim();
+  if (!v) { showToast('Colle d\'abord l\'URL générée dans le frigo.', { type: 'err' }); return; }
+  try {
+    await api('POST', '/api/physio/integrations/fridge', { url: v });
+    showToast('Lien enregistré. Envoie une fois pour vérifier qu\'il fonctionne.');
+    physioRender();
+  } catch (e) {
+    showToast(e.message || 'Lien refusé', { type: 'err' });
+  }
+}
+
+async function physioFridgeSync() {
+  try {
+    const r = await api('POST', '/api/physio/integrations/fridge/sync');
+    // On rapporte le résultat réel plutôt qu'un « c'est fait » systématique :
+    // « rien à transmettre » est une information, pas un succès.
+    showToast(r.envoye
+      ? `${r.seances} séance(s) et ${r.jours_energie} jour(s) de dépense transmis.`
+      : (r.raison || 'Rien à transmettre.'));
+    physioRender();
+  } catch (e) {
+    showToast(e.message || 'Envoi impossible', { type: 'err' });
+  }
+}
+
+async function physioFridgeRemove() {
+  if (!confirm('Couper le lien ? Le frigo cessera de recevoir tes séances.')) return;
+  try {
+    await api('DELETE', '/api/physio/integrations/fridge');
+    showToast('Lien coupé.');
+    physioRender();
+  } catch (e) {
+    showToast(e.message || 'Erreur', { type: 'err' });
+  }
 }
