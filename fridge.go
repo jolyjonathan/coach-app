@@ -176,6 +176,14 @@ func construireChargeFrigo(uid string) (fridgePayload, error) {
 	var out fridgePayload
 	acts, err := stravaFetchActivitesBrutes(uid, fridgeFenetreJours)
 	if err != nil {
+		// stravaLoadCreds répond « user introuvable » quand Strava n'est pas
+		// connecté — un message vrai côté code et incompréhensible à l'écran.
+		// La cause réelle n'est pas une panne : il n'y a simplement aucune
+		// source de séances, et c'est une chose que l'utilisateur peut corriger.
+		if strings.Contains(err.Error(), "introuvable") ||
+			strings.Contains(err.Error(), "pas connecté") {
+			return out, errStravaAbsent
+		}
 		return out, err
 	}
 	parJour := map[string]float64{}
@@ -262,6 +270,13 @@ func envoyerAuFrigo(pushURL string, p fridgePayload) error {
 	return fmt.Errorf("le frigo a répondu %s : %s", resp.Status, strings.TrimSpace(string(rep)))
 }
 
+// errStravaAbsent : pas une panne, une configuration incomplète. Distinguer
+// les deux change le message ET le code HTTP — 400 se corrige, 502 se subit.
+var errStravaAbsent = errors.New(
+	"Strava n'est pas connecté : coach n'a donc aucune séance à transmettre. " +
+		"Connecte Strava ci-dessus, puis relance l'envoi. Le sens inverse " +
+		"(poids, sommeil, apport depuis le frigo) fonctionne indépendamment.")
+
 /* --------------------------------------------------------------- handlers */
 
 // GET /api/physio/integrations/fridge
@@ -340,6 +355,10 @@ func handleFridgeSync(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := construireChargeFrigo(uid)
 	if err != nil {
+		if errors.Is(err, errStravaAbsent) {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeErr(w, http.StatusBadGateway, "lecture des activités impossible : "+err.Error())
 		return
 	}

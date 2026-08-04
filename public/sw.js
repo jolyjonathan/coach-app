@@ -33,7 +33,7 @@
 // gamification.js extraits d'app.js ; qrcode.js désormais chargé à la
 // demande mais conservé dans le shell pour l'enrôlement 2FA hors-ligne).
 // Bump à v8 : ajout de blockreview.js (bilan de fin de bloc Issurin).
-const SHELL_VERSION = 'coach-shell-v9';
+const SHELL_VERSION = 'coach-shell-v10';
 const DATA_VERSION  = 'coach-data-v1';
 
 // Tous les JS et CSS chargés par index.html doivent être ici, sinon offline

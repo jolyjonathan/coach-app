@@ -2148,7 +2148,11 @@ function physioProviderCard(p, status, webhookUrl) {
           <button type="button" data-action="fridge-remove" class="sec"
                   style="font-size:11px;padding:4px 8px;color:var(--mut)">déconnecter</button>
         </div>
-        <div class="mut" style="font-size:11px">Envoi vers <strong>${escapeHtml(status.hote || '')}</strong></div>`;
+        <div class="mut" style="font-size:11px;margin-bottom:8px">Envoi vers <strong>${escapeHtml(status.hote || '')}</strong></div>
+        <button type="button" data-action="fridge-inbound" class="sec"
+                style="font-size:11.5px;padding:5px 10px;width:100%">
+          🔑 Obtenir l'URL à coller dans le frigo
+        </button>`;
     } else {
       actionHtml = `
         <input type="url" data-fridge-url placeholder="https://fridge.jjoly.eu/api/coach/push/…"
@@ -2280,6 +2284,9 @@ function physioCardActionDelegate(ev) {
     }
     case 'fridge-sync':
       physioFridgeSync();
+      break;
+    case 'fridge-inbound':
+      physioFridgeInbound();
       break;
     case 'fridge-remove':
       physioFridgeRemove();
@@ -8743,13 +8750,17 @@ if ('serviceWorker' in navigator) {
 
 async function physioFridgeSave(url) {
   const v = (url || '').trim();
-  if (!v) { showToast('Colle d\'abord l\'URL générée dans le frigo.', { type: 'err' }); return; }
+  if (!v) {
+    showToast('URL manquante', { variant: 'error',
+      message: "Colle d'abord l'URL générée dans le frigo, onglet Santé." });
+    return;
+  }
   try {
     await api('POST', '/api/physio/integrations/fridge', { url: v });
-    showToast('Lien enregistré. Envoie une fois pour vérifier qu\'il fonctionne.');
+    showToast('Lien enregistré', { message: "Envoie une fois pour vérifier qu'il fonctionne." });
     physioRender();
   } catch (e) {
-    showToast(e.message || 'Lien refusé', { type: 'err' });
+    showToast('Lien refusé', { variant: 'error', message: e.message });
   }
 }
 
@@ -8758,12 +8769,17 @@ async function physioFridgeSync() {
     const r = await api('POST', '/api/physio/integrations/fridge/sync');
     // On rapporte le résultat réel plutôt qu'un « c'est fait » systématique :
     // « rien à transmettre » est une information, pas un succès.
-    showToast(r.envoye
-      ? `${r.seances} séance(s) et ${r.jours_energie} jour(s) de dépense transmis.`
-      : (r.raison || 'Rien à transmettre.'));
+    // « Rien à transmettre » n'est pas un succès : on le dit sur le ton
+    // neutre de l'information plutôt qu'avec une coche verte.
+    if (r.envoye) {
+      showToast('Transmis au frigo',
+        { message: `${r.seances} séance(s), ${r.jours_energie} jour(s) de dépense.` });
+    } else {
+      showToast('Rien à transmettre', { variant: 'info', message: r.raison || '' });
+    }
     physioRender();
   } catch (e) {
-    showToast(e.message || 'Envoi impossible', { type: 'err' });
+    showToast('Envoi impossible', { variant: 'error', message: e.message });
   }
 }
 
@@ -8774,6 +8790,58 @@ async function physioFridgeRemove() {
     showToast('Lien coupé.');
     physioRender();
   } catch (e) {
-    showToast(e.message || 'Erreur', { type: 'err' });
+    showToast('Erreur', { variant: 'error', message: e.message });
+  }
+}
+
+// physioFridgeInbound — le sens RETOUR (frigo → coach).
+//
+// Il passe par le webhook physio générique, le même que celui d'Apple Health :
+// c'est le frigo qui appelle coach. On l'active à la volée plutôt que de
+// demander à l'utilisateur de comprendre qu'il lui faut « un webhook » — il a
+// cliqué sur un bouton qui dit ce qu'il veut obtenir.
+async function physioFridgeInbound() {
+  const integ = await physioFetchIntegrations();
+  if (!integ) { showToast('Serveur injoignable', { variant: 'error' }); return; }
+  let wh = integ.webhook || { enabled: false };
+  if (!wh.enabled) {
+    try {
+      await api('POST', '/api/physio/integrations/webhook');
+    } catch (e) {
+      showToast('Erreur', { variant: 'error', message: e.message });
+      return;
+    }
+    const again = await physioFetchIntegrations();
+    wh = (again && again.webhook) || { enabled: false };
+  }
+  const url = window.location.origin + (wh.path || '');
+  await openModal({
+    title: '🧊 Recevoir depuis le Frigo Adaptatif',
+    body: `
+      <p style="font-size:12.5px;line-height:1.55;margin:0 0 10px">
+        Colle cette URL dans le frigo, onglet <strong>Santé</strong>, champ
+        « URL webhook fournie par Coach ». Il enverra alors ton poids, ton
+        sommeil et ton apport alimentaire déclaré.
+      </p>
+      <code style="display:block;font-size:11px;background:var(--bg);padding:8px 10px;
+            border-radius:6px;word-break:break-all;border:1px solid var(--line);
+            font-family:ui-monospace,Menlo,monospace">${escapeHtml(url)}</code>
+      <p class="mut" style="font-size:11.5px;line-height:1.5;margin:10px 0 0">
+        Cette URL vaut mot de passe en écriture. Elle est partagée avec le
+        webhook Apple Health : la faire tourner ici invaliderait aussi ton
+        Raccourci iOS.
+      </p>
+      <p class="mut" style="font-size:11.5px;line-height:1.5;margin:8px 0 0">
+        ⚠️ Le webhook exige ton <strong>consentement aux données de santé</strong> à
+        la version courante de la politique de confidentialité. Sans lui, le
+        frigo recevra un refus explicite.
+      </p>`,
+    buttons: [{ label: 'Copier', value: true, primary: true }],
+  });
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast('URL copiée');
+  } catch (e) {
+    showToast('Copie impossible', { variant: 'info', message: 'Sélectionne l\'URL à la main.' });
   }
 }
