@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -171,54 +172,200 @@ func intensiteDepuisFC(avgHR, maxHR float64) string {
 	}
 }
 
-// construireChargeFrigo assemble les séances Strava et l'énergie dépensée.
-func construireChargeFrigo(uid string) (fridgePayload, error) {
-	var out fridgePayload
-	acts, err := stravaFetchActivitesBrutes(uid, fridgeFenetreJours)
-	if err != nil {
-		// stravaLoadCreds répond « user introuvable » quand Strava n'est pas
-		// connecté — un message vrai côté code et incompréhensible à l'écran.
-		// La cause réelle n'est pas une panne : il n'y a simplement aucune
-		// source de séances, et c'est une chose que l'utilisateur peut corriger.
-		if strings.Contains(err.Error(), "introuvable") ||
-			strings.Contains(err.Error(), "pas connecté") {
-			return out, errStravaAbsent
-		}
-		return out, err
+// seanceCoach : forme d'une entrée de `history` dans le fichier de l'utilisateur
+// (voir public/app.js, construction de `rec` à la fin d'une séance).
+type seanceCoach struct {
+	ID       string  `json:"id"`
+	Date     string  `json:"date"` // ISO complet, pas seulement le jour
+	Title    string  `json:"title"`
+	RPE      float64 `json:"rpe"`
+	Duration float64 `json:"durationMin"` // absent des séances antérieures à v0.2.4
+	Exos     []struct {
+		Sets int `json:"sets"`
+	} `json:"exos"`
+	Sets []struct {
+		Reps float64 `json:"reps"`
+	} `json:"sets"`
+}
+
+// dureeSeance : durée réelle si elle a été enregistrée, sinon une estimation.
+//
+// Les séances antérieures à v0.2.4 n'ont pas d'horodatage de début : rien dans
+// le fichier ne permet de retrouver leur durée. Plutôt que de les écarter, on
+// estime à trois minutes par série effectuée — travail plus repos, ordre de
+// grandeur usuel en musculation. C'est grossier, et c'est pourquoi ces séances
+// partent avec une note qui le dit : le frigo affichera une durée, autant
+// qu'elle soit annoncée pour ce qu'elle vaut.
+func dureeSeance(s seanceCoach) (minutes int, estimee bool) {
+	if s.Duration > 0 {
+		return int(s.Duration), false
 	}
-	parJour := map[string]float64{}
-	for i := range acts {
-		a := &acts[i]
-		if len(a.StartDateLocal) < 10 || a.MovingTime <= 0 {
+	n := len(s.Sets)
+	if n == 0 {
+		for _, e := range s.Exos {
+			n += e.Sets
+		}
+	}
+	if n == 0 {
+		return 0, true
+	}
+	d := n * 3
+	if d > 240 {
+		d = 240 // au-delà, c'est une donnée aberrante, pas une séance
+	}
+	return d, true
+}
+
+// intensiteDepuisRPE : l'échelle de perception d'effort est une mesure plus
+// directe que la fréquence cardiaque pour de la musculation — elle intègre la
+// difficulté des séries, ce qu'une FC moyenne dilue entre les temps de repos.
+func intensiteDepuisRPE(rpe float64) string {
+	switch {
+	case rpe <= 0:
+		return "moderee" // non renseigné : on ne devine pas
+	case rpe >= 8:
+		return "soutenue"
+	case rpe <= 5:
+		return "legere"
+	default:
+		return "moderee"
+	}
+}
+
+// poidsCorporel cherche la dernière pesée connue dans le fichier utilisateur.
+// Sert à estimer la dépense ; sans elle on renvoie 0 et le frigo appliquera sa
+// propre estimation plutôt qu'un chiffre fondé sur un poids inventé.
+func poidsCorporel(data map[string]any) float64 {
+	body, _ := data["body"].(map[string]any)
+	if body == nil {
+		return 0
+	}
+	arr, _ := body["weights"].([]any)
+	dernier := 0.0
+	for _, it := range arr {
+		m, _ := it.(map[string]any)
+		if m == nil {
 			continue
 		}
-		jour := a.StartDateLocal[:10]
-		kind, ok := typeStravaVersFrigo[a.Type]
-		if !ok {
-			kind = "autre"
+		if kg, ok := m["kg"].(float64); ok && kg > 0 {
+			dernier = kg
 		}
+	}
+	return dernier
+}
+
+// construireChargeFrigo assemble les séances enregistrées DANS coach, plus les
+// activités Strava si elles sont disponibles.
+//
+// Les séances de coach sont la source principale : c'est le travail que
+// l'utilisateur a réellement fait ici, avec son RPE. Strava n'est qu'un
+// complément pour le cardio, et son absence n'est pas une erreur.
+func construireChargeFrigo(uid string) (fridgePayload, error) {
+	var out fridgePayload
+
+	brut, err := loadWorkout(uid)
+	if err != nil {
+		return out, err
+	}
+	var data map[string]any
+	if len(brut) > 0 {
+		_ = json.Unmarshal(brut, &data)
+	}
+	var histoire []seanceCoach
+	if data != nil {
+		if h, err := json.Marshal(data["history"]); err == nil {
+			_ = json.Unmarshal(h, &histoire)
+		}
+	}
+	poids := poidsCorporel(data)
+	limite := time.Now().AddDate(0, 0, -fridgeFenetreJours)
+	parJour := map[string]float64{}
+
+	for i := range histoire {
+		h := histoire[i]
+		if len(h.Date) < 10 {
+			continue
+		}
+		jour := h.Date[:10]
+		if d, err := time.Parse("2006-01-02", jour); err == nil && d.Before(limite) {
+			continue
+		}
+		duree, estimee := dureeSeance(h)
+		if duree <= 0 {
+			continue
+		}
+		note := h.Title
+		if estimee {
+			note = strings.TrimSpace(h.Title + " (durée estimée)")
+		}
+		// Dépense : METs de la musculation (5,0, compendium d'Ainsworth)
+		// pondérés par l'intensité perçue, appliqués au poids réel.
 		kcal := 0
-		switch {
-		case a.Calories > 0:
-			kcal = int(a.Calories)
-		case a.Kilojoules > 0:
-			kcal = int(a.Kilojoules * 0.239)
+		if poids > 0 {
+			met := 5.0
+			switch intensiteDepuisRPE(h.RPE) {
+			case "soutenue":
+				met = 6.0
+			case "legere":
+				met = 3.5
+			}
+			kcal = int(met * poids * float64(duree) / 60)
 		}
 		out.Seances = append(out.Seances, fridgeSeance{
-			// Préfixé : l'identifiant doit rester stable ET reconnaissable si
-			// une autre source d'activités s'ajoute un jour.
-			ExternalID:  fmt.Sprintf("strava-%d", a.ID),
+			// h.ID est l'identifiant du MODÈLE de séance : il se répète à
+			// chaque exécution. L'utiliser tel quel écraserait toutes les
+			// séances d'un même programme les unes sur les autres, côté frigo,
+			// via son index d'unicité (user, source, external_id).
+			// L'horodatage complet, lui, est unique par séance.
+			ExternalID:  "coach-" + h.Date,
 			Day:         jour,
-			Kind:        kind,
-			DurationMin: a.MovingTime / 60,
-			Intensity:   intensiteDepuisFC(a.AverageHeartrate, a.MaxHeartrate),
+			Kind:        "musculation",
+			DurationMin: duree,
+			Intensity:   intensiteDepuisRPE(h.RPE),
 			KcalEst:     kcal,
+			Note:        note,
 		})
 		parJour[jour] += float64(kcal)
 		if len(out.Seances) >= fridgeMaxSeances {
 			break
 		}
 	}
+
+	// Strava en complément. Non connecté n'est PAS une erreur : la plupart des
+	// utilisateurs de coach ne font que de la musculation.
+	if acts, err := stravaFetchActivitesBrutes(uid, fridgeFenetreJours); err == nil {
+		for i := range acts {
+			a := &acts[i]
+			if len(a.StartDateLocal) < 10 || a.MovingTime <= 0 {
+				continue
+			}
+			if len(out.Seances) >= fridgeMaxSeances {
+				break
+			}
+			jour := a.StartDateLocal[:10]
+			kind, ok := typeStravaVersFrigo[a.Type]
+			if !ok {
+				kind = "autre"
+			}
+			kcal := 0
+			switch {
+			case a.Calories > 0:
+				kcal = int(a.Calories)
+			case a.Kilojoules > 0:
+				kcal = int(a.Kilojoules * 0.239)
+			}
+			out.Seances = append(out.Seances, fridgeSeance{
+				ExternalID:  fmt.Sprintf("strava-%d", a.ID),
+				Day:         jour,
+				Kind:        kind,
+				DurationMin: a.MovingTime / 60,
+				Intensity:   intensiteDepuisFC(a.AverageHeartrate, a.MaxHeartrate),
+				KcalEst:     kcal,
+			})
+			parJour[jour] += float64(kcal)
+		}
+	}
+
 	jours := make([]string, 0, len(parJour))
 	for j := range parJour {
 		jours = append(jours, j)
@@ -226,11 +373,11 @@ func construireChargeFrigo(uid string) (fridgePayload, error) {
 	sort.Strings(jours)
 	for _, j := range jours {
 		if parJour[j] <= 0 {
-			continue // pas de dépense connue : on ne transmet pas un zéro
+			continue // pas de dépense estimable : on ne transmet pas un zéro
 		}
-		// `charge` est laissée à 0 : la charge type Banister est calculée
-		// CÔTÉ CLIENT à partir de body.physio, ce serveur ne la connaît pas.
-		// Envoyer une valeur inventée serait pire qu'une absence.
+		// `charge` reste à 0 : la charge type Banister est calculée CÔTÉ CLIENT
+		// à partir de body.physio. Ce serveur ne la connaît pas, et une valeur
+		// inventée serait pire qu'une absence.
 		out.Energie = append(out.Energie, fridgeEnergie{Day: j, KcalDepense: int(parJour[j])})
 	}
 	return out, nil
@@ -269,13 +416,6 @@ func envoyerAuFrigo(pushURL string, p fridgePayload) error {
 	}
 	return fmt.Errorf("le frigo a répondu %s : %s", resp.Status, strings.TrimSpace(string(rep)))
 }
-
-// errStravaAbsent : pas une panne, une configuration incomplète. Distinguer
-// les deux change le message ET le code HTTP — 400 se corrige, 502 se subit.
-var errStravaAbsent = errors.New(
-	"Strava n'est pas connecté : coach n'a donc aucune séance à transmettre. " +
-		"Connecte Strava ci-dessus, puis relance l'envoi. Le sens inverse " +
-		"(poids, sommeil, apport depuis le frigo) fonctionne indépendamment.")
 
 /* --------------------------------------------------------------- handlers */
 
@@ -355,15 +495,13 @@ func handleFridgeSync(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := construireChargeFrigo(uid)
 	if err != nil {
-		if errors.Is(err, errStravaAbsent) {
-			writeErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
 		writeErr(w, http.StatusBadGateway, "lecture des activités impossible : "+err.Error())
 		return
 	}
 	if len(p.Seances) == 0 && len(p.Energie) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{"envoye": false, "raison": "rien à transmettre"})
+		writeJSON(w, http.StatusOK, map[string]any{"envoye": false,
+			"raison": "aucune séance terminée sur les " +
+				strconv.Itoa(fridgeFenetreJours) + " derniers jours"})
 		return
 	}
 	if err := envoyerAuFrigo(pushURL, p); err != nil {

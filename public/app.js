@@ -6695,7 +6695,11 @@ function openSession() {
   if (!S.profile) { openOnboarding(); return; }
   if (!S.currentSession) { S.currentSession = generateSession(); queueSave(); }
   const mode = (S.profile && S.profile.sessionMode === 'circuit') ? 'circuit' : 'straight';
-  live = { s: S.currentSession, mode, order: buildOrder(S.currentSession, mode), sets: [] };
+  // startedAt : la durée réelle de la séance n'était nulle part dans le
+  // fichier — ni horodatage de début, ni marqueur sur les séries. On ne
+  // pouvait donc que l'estimer après coup. On la mesure désormais.
+  live = { s: S.currentSession, mode, order: buildOrder(S.currentSession, mode),
+           sets: [], startedAt: Date.now() };
   show('viewSession');
   renderSession();
 }
@@ -8066,6 +8070,11 @@ document.getElementById('qSubmit').addEventListener('click', () => {
     exos: live.s.exos.map(e => ({id:e.id, name:e.name, sets:e.sets, reps:e.reps, weight:e.weight, timed:!!e.timed})),
     sets: live.sets,
     rpe, rir, energy, mood, note, pains,
+    // Durée réelle, en minutes. Plafonnée à 4 h : au-delà, l'onglet est
+    // simplement resté ouvert, ce n'est pas une séance de six heures.
+    durationMin: live.startedAt
+      ? Math.min(240, Math.max(1, Math.round((Date.now() - live.startedAt) / 60000)))
+      : null,
     aggReactionMs: avg(live.sets.map(s => s.reactionMs).filter(x => x != null)),
     aggTapMs: avg(live.sets.map(s => s.tapMs).filter(x => x != null)),
     formBefore: S.formScore,
