@@ -11,6 +11,10 @@
 #   - remplacer jolyjonathan partout
 name: release
 
+concurrency:
+  group: deploy-infra-coach
+  cancel-in-progress: false
+
 on:
   push:
     branches: [main]
@@ -120,9 +124,34 @@ jobs:
           else
             TARGET=apps/coach/staging/kustomization.yaml
           fi
-          sed -i "/# ci-managed/s|newTag: [^ ]*|newTag: $TAG|" "$TARGET"
           git config user.name  "ci-bot"
           git config user.email "ci@jjoly.eu"
-          git add "$TARGET"
-          git commit -m "deploy(coach): $TAG → $(basename $(dirname $TARGET))" || echo "rien à committer"
-          git push
+
+          # jjoly-infra a QUATRE écrivains : chaque dépôt d'app y pousse, et
+          # `git push --follow-tags` déclenche deux runs à la fois (branche +
+          # tag). Le second push arrive sur une référence qui a bougé et se
+          # fait rejeter — panne intermittente, jamais reproduite au moment où
+          # on la cherche.
+          #
+          # On réessaie en repartant de l'état courant. Sûr ici : chaque run ne
+          # touche qu'un fichier de son application, deux écrivains différents
+          # ne peuvent pas entrer en conflit.
+          for essai in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            sed -i "/# ci-managed/s|newTag: [^ ]*|newTag: $TAG|" "$TARGET"
+            if git diff --quiet -- "$TARGET"; then
+              echo "$TARGET porte déjà $TAG — rien à faire."
+              exit 0
+            fi
+            git add "$TARGET"
+            git commit -m "deploy(coach): $TAG → $(basename $(dirname $TARGET))"
+            if git push origin HEAD:main; then
+              echo "Poussé à la tentative $essai."
+              exit 0
+            fi
+            echo "Push rejeté (tentative $essai) — un autre run a écrit entre-temps."
+            sleep $((essai * 3))
+          done
+          echo "::error::Cinq tentatives rejetées : l'infra est écrite en continu, ou le jeton n'a plus le droit d'écrire."
+          exit 1
