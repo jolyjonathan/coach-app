@@ -386,6 +386,23 @@ func construireChargeFrigo(uid string) (fridgePayload, error) {
 // envoyerAuFrigo poste la charge. Renvoie une erreur explicite : elle est
 // remontée telle quelle à l'utilisateur, une synchro qui échoue en silence
 // entretient la croyance que les données arrivent.
+// sansSecretFrigo : même problème, même remède que côté frigo.
+//
+// Go inclut l'URL appelée dans ses erreurs réseau, et cette URL porte le
+// secret de réception du frigo. Sans nettoyage, il apparaît dans le message
+// remonté à l'utilisateur — donc dans la première capture d'écran envoyée
+// pour demander de l'aide.
+func sansSecretFrigo(msg, pushURL string) string {
+	if pushURL == "" {
+		return msg
+	}
+	remplacement := "l'URL du frigo"
+	if u, err := url.Parse(pushURL); err == nil && u.Host != "" {
+		remplacement = "https://" + u.Host + "/…"
+	}
+	return strings.ReplaceAll(msg, pushURL, remplacement)
+}
+
 func envoyerAuFrigo(pushURL string, p fridgePayload) error {
 	// Revalidation à l'envoi, pas seulement à la saisie : le fichier
 	// utilisateurs peut être restauré ou édité à la main.
@@ -404,7 +421,7 @@ func envoyerAuFrigo(pushURL string, p fridgePayload) error {
 	req.Header.Set("User-Agent", "coach-adaptatif/1.0")
 	resp, err := clientFridge.Do(req)
 	if err != nil {
-		return err
+		return errors.New(sansSecretFrigo(err.Error(), pushURL))
 	}
 	defer resp.Body.Close()
 	rep, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
